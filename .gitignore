@@ -1,0 +1,26 @@
+# Virtual environments
+.venv/
+.venv_web/
+**/.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Runtime outputs
+logs/
+reports/
+data/*.json
+*.pid
+nohup.out
+output.txt
+
+# Local/private configs
+configs/config.toml
+configs/stock_sync.env
+*.env
+
+# Local tool artifacts
+.codex

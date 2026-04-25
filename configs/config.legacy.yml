@@ -1,0 +1,27 @@
+provider:
+  name: mock   # mock, tushare, eastmoney ...
+  api_key: ""
+  base_url: ""
+  # extras: custom fields forwarded to provider implementation
+  extras:
+    timeout: 8
+
+report:
+  indices:
+    - 000001.SH
+    - 399001.SZ
+    - 399006.SZ
+    - 000688.SH
+  sector_top_k: 3
+  representatives:
+    - 600519.SH
+    - 000858.SZ
+    - 601318.SH
+
+codex:
+  enabled: false
+  model: gpt-5.3-codex
+  reasoning_effort: medium
+  timeout: 60
+
+output_dir: ./reports

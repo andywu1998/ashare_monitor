@@ -1,0 +1,22 @@
+[provider]
+name = "sina"
+api_key = ""
+base_url = ""
+
+[provider.extras]
+timeout = 8
+# xueqiu_cookie = "xq_a_token=...; u=...; "
+# hot_size = 3
+
+[report]
+indices = ["000001.SH", "399001.SZ", "399006.SZ", "000688.SH"]
+sector_top_k = 3
+representatives = []  # 留空时自动使用雪球热门股或成交额 Top
+
+[codex]
+enabled = false
+model = "gpt-5.3-codex"
+reasoning_effort = "medium"
+timeout = 60
+
+output_dir = "./reports"

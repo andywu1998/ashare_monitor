@@ -1,0 +1,6 @@
+fastapi==0.112.0
+uvicorn==0.30.5
+tushare==1.4.24
+PyMySQL==1.1.1
+python-dotenv==1.0.1
+pandas==2.2.2

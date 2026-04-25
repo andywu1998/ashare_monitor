@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>周期分析服务</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f5f7fb;
+      color: #0f172a;
+    }
+    .wrap {
+      max-width: 1800px;
+      margin: 0 auto;
+      padding: 16px 20px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 430px) minmax(860px, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .left-col {
+      position: sticky;
+      top: 12px;
+      max-height: calc(100vh - 24px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .right-card {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 0;
+    }
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 22px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #475569;
+    }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid #2563eb;
+      background: #2563eb;
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button.secondary {
+      border-color: #cbd5e1;
+      color: #334155;
+      background: #fff;
+    }
+    .muted { color: #64748b; font-size: 12px; }
+    .error { color: #b91c1c; font-size: 13px; }
+    .ok { color: #065f46; font-size: 13px; }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .kpi {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      background: #fafcff;
+    }
+    .kpi .k { font-size: 11px; color: #64748b; }
+    .kpi .v { font-size: 15px; font-weight: 700; margin-top: 3px; }
+    .preview-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .preview-title {
+      font-size: 14px;
+      color: #334155;
+      font-weight: 600;
+    }
+    .iframe-wrap {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+      flex: 1;
+      min-height: 560px;
+    }
+    .iframe-wrap:fullscreen {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+    }
+    iframe {
+      width: 100%;
+      height: 72vh;
+      min-height: 560px;
+      border: none;
+      background: #fff;
+      display: block;
+    }
+    .iframe-wrap:fullscreen iframe {
+      height: 100%;
+      min-height: 0;
+    }
+    .hint {
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    @media (max-width: 1180px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .left-col {
+        position: static;
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+      }
+      .right-card {
+        min-height: auto;
+        margin-bottom: 14px;
+      }
+      .iframe-wrap {
+        min-height: 520px;
+      }
+      iframe {
+        height: 72vh;
+        min-height: 520px;
+      }
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      iframe { height: 68vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="layout">
+      <div class="left-col">
+        <div class="card">
+          <h1>A股周期分析服务</h1>
+          <div class="grid">
+            <div>
+              <label>公司名</label>
+              <input id="name" value="中际旭创" />
+            </div>
+            <div>
+              <label>threshold</label>
+              <input id="threshold" type="number" step="0.01" value="0.08" />
+            </div>
+            <div>
+              <label>min-gap</label>
+              <input id="minGap" type="number" step="1" value="5" />
+            </div>
+            <div>
+              <label>lookback-days</label>
+              <input id="lookback" type="number" step="1" value="365" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="runBtn">生成HTML报告</button>
+            <button id="openBtn" class="secondary" disabled>新窗口打开报告</button>
+            <span id="status" class="muted">等待执行</span>
+          </div>
+          <div id="error" class="error"></div>
+          <div id="summary" class="summary"></div>
+          <div class="hint">PC建议：左侧参数固定，右侧看报告；数据库连接由后端环境变量管理。</div>
+        </div>
+      </div>
+      <div class="card right-card">
+        <div class="preview-toolbar">
+          <div class="preview-title">报告预览</div>
+          <div class="actions" style="margin-top:0">
+            <button id="fsBtn" class="secondary" type="button">全屏预览</button>
+          </div>
+        </div>
+        <div class="iframe-wrap" id="iframeWrap">
+          <iframe id="viewer" src="about:blank"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const runBtn = document.getElementById("runBtn");
+    const openBtn = document.getElementById("openBtn");
+    const fsBtn = document.getElementById("fsBtn");
+    const statusEl = document.getElementById("status");
+    const errEl = document.getElementById("error");
+    const summaryEl = document.getElementById("summary");
+    const viewer = document.getElementById("viewer");
+    const iframeWrap = document.getElementById("iframeWrap");
+    let currentHtmlUrl = "";
+
+    function setStatus(text, cls) {
+      statusEl.className = cls || "muted";
+      statusEl.textContent = text;
+    }
+
+    function getVal(id) { return document.getElementById(id).value; }
+
+    function adjustIframeHeight() {
+      if (!currentHtmlUrl) return;
+      if (document.fullscreenElement === iframeWrap) return;
+      try {
+        const doc = viewer.contentDocument;
+        if (!doc) return;
+        const body = doc.body;
+        const root = doc.documentElement;
+        const contentHeight = Math.max(
+          body ? body.scrollHeight : 0,
+          root ? root.scrollHeight : 0,
+          560
+        );
+        const target = Math.max(560, Math.min(1600, contentHeight + 12));
+        viewer.style.height = `${target}px`;
+      } catch (_) {
+        // no-op
+      }
+    }
+
+    function renderSummary(summary) {
+      if (!summary) { summaryEl.innerHTML = ""; return; }
+      const items = [
+        ["股票", `${summary.stock_name} (${summary.ts_code})`],
+        ["区间", `${summary.date_range[0]} ~ ${summary.date_range[1]}`],
+        ["样本交易日", summary.sample_days],
+        ["周期数", summary.cycle_count],
+        ["极值点", summary.pivot_count],
+        ["收盘区间", `${summary.min_close} ~ ${summary.max_close}`],
+        ["最新收盘", `${summary.latest_date} / ${summary.latest_close}`],
+        ["参数", `threshold=${summary.threshold}, gap=${summary.min_gap}`],
+      ];
+      summaryEl.innerHTML = items.map(([k,v]) =>
+        `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`
+      ).join("");
+    }
+
+    runBtn.addEventListener("click", async () => {
+      errEl.textContent = "";
+      setStatus("生成中...", "muted");
+      openBtn.disabled = true;
+      try {
+        const body = {
+          name: getVal("name").trim(),
+          threshold: Number(getVal("threshold")),
+          min_gap: Number(getVal("minGap")),
+          lookback_days: Number(getVal("lookback")),
+        };
+        const resp = await fetch("/api/reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        currentHtmlUrl = data.html_url;
+        viewer.style.height = "72vh";
+        viewer.src = currentHtmlUrl;
+        openBtn.disabled = false;
+        renderSummary(data.summary);
+        setStatus("生成成功", "ok");
+      } catch (e) {
+        setStatus("生成失败", "error");
+        errEl.textContent = String(e.message || e);
+      }
+    });
+
+    openBtn.addEventListener("click", () => {
+      if (currentHtmlUrl) window.open(currentHtmlUrl, "_blank");
+    });
+
+    fsBtn.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement === iframeWrap) {
+          await document.exitFullscreen();
+          fsBtn.textContent = "全屏预览";
+          return;
+        }
+        if (iframeWrap.requestFullscreen) {
+          await iframeWrap.requestFullscreen();
+          fsBtn.textContent = "退出全屏";
+        }
+      } catch (_) {
+        // no-op
+      }
+    });
+
+    document.addEventListener("fullscreenchange", () => {
+      if (document.fullscreenElement !== iframeWrap) {
+        fsBtn.textContent = "全屏预览";
+        adjustIframeHeight();
+      }
+    });
+
+    viewer.addEventListener("load", () => {
+      try {
+        if (viewer.contentWindow) viewer.contentWindow.scrollTo(0, 0);
+      } catch (_) {
+        // no-op
+      }
+      adjustIframeHeight();
+      setTimeout(adjustIframeHeight, 180);
+      setTimeout(adjustIframeHeight, 450);
+    });
+
+    window.addEventListener("resize", () => {
+      clearTimeout(window.__viewerResizeTimer);
+      window.__viewerResizeTimer = setTimeout(adjustIframeHeight, 120);
+    });
+  </script>
+</body>
+</html>
