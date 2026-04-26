@@ -78,6 +78,28 @@ def resolve_stock(name: str, cfg: DbConfig) -> Tuple[str, str]:
     raise RuntimeError(f"stock not found by name: {name}")
 
 
+def resolve_fund(name: str, cfg: DbConfig) -> Tuple[str, str]:
+    safe_name = mysql_escape(name)
+    sql_exact = (
+        "SELECT ts_code, name FROM stock_basic "
+        f"WHERE name = '{safe_name}' AND asset_type = 'F' ORDER BY ts_code;"
+    )
+    exact = run_mysql(sql_exact, cfg)
+    if exact:
+        ts_code, real_name = exact[0].split("\t", 1)
+        return ts_code, real_name
+
+    sql_like = (
+        "SELECT ts_code, name FROM stock_basic "
+        f"WHERE name LIKE '%{safe_name}%' AND asset_type = 'F' ORDER BY ts_code LIMIT 1;"
+    )
+    fuzzy = run_mysql(sql_like, cfg)
+    if fuzzy:
+        ts_code, real_name = fuzzy[0].split("\t", 1)
+        return ts_code, real_name
+    raise RuntimeError(f"fund not found by name: {name}")
+
+
 def latest_trade_date(cfg: DbConfig) -> str:
     rows = run_mysql("SELECT MAX(trade_date) FROM stock_daily;", cfg)
     if not rows:
@@ -97,6 +119,66 @@ def fetch_daily(ts_code: str, start: str, end: str, cfg: DbConfig) -> List[Dict[
         "SELECT trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount "
         "FROM stock_daily "
         f"WHERE ts_code = '{safe_code}' "
+        f"AND trade_date >= '{start}' AND trade_date <= '{end}' "
+        "ORDER BY trade_date ASC;"
+    )
+    rows = run_mysql(sql, cfg)
+    out: List[Dict[str, Optional[float]]] = []
+    for ln in rows:
+        (
+            trade_date,
+            open_p,
+            high_p,
+            low_p,
+            close_p,
+            pre_close_p,
+            change_p,
+            pct_chg_p,
+            vol_p,
+            amount_p,
+        ) = ln.split("\t")
+        open_num = _parse_num(open_p)
+        high_num = _parse_num(high_p)
+        low_num = _parse_num(low_p)
+        close_v = _parse_num(close_p)
+        pre_close_num = _parse_num(pre_close_p)
+        if close_v is None:
+            continue
+        open_v = open_num if open_num is not None else close_v
+        high_v = high_num if high_num is not None else max(open_v, close_v)
+        low_v = low_num if low_num is not None else min(open_v, close_v)
+        pre_close_v = pre_close_num if pre_close_num is not None else close_v
+        out.append(
+            {
+                "trade_date": trade_date,
+                "open": open_v,
+                "high": high_v,
+                "low": low_v,
+                "close": close_v,
+                "pre_close": pre_close_v,
+                "change": _parse_num(change_p),
+                "pct_chg": _parse_num(pct_chg_p),
+                "vol": _parse_num(vol_p),
+                "amount": _parse_num(amount_p),
+            }
+        )
+    return out
+
+
+def fetch_daily_by_asset_type(
+    ts_code: str,
+    start: str,
+    end: str,
+    cfg: DbConfig,
+    asset_type: str,
+) -> List[Dict[str, Optional[float]]]:
+    safe_code = mysql_escape(ts_code)
+    safe_asset = mysql_escape(asset_type)
+    sql = (
+        "SELECT trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount "
+        "FROM stock_daily "
+        f"WHERE ts_code = '{safe_code}' "
+        f"AND asset_type = '{safe_asset}' "
         f"AND trade_date >= '{start}' AND trade_date <= '{end}' "
         "ORDER BY trade_date ASC;"
     )
@@ -958,6 +1040,23 @@ def make_html(
 </body>
 </html>
 """
+
+
+def make_html_asset(
+    stock_name: str,
+    ts_code: str,
+    rows: List[Dict[str, Optional[float]]],
+    pivots: List[Tuple[int, str, float]],
+    threshold: float,
+    min_gap: int,
+    asset_label: str = "A股",
+) -> str:
+    html = make_html(stock_name, ts_code, rows, pivots, threshold, min_gap)
+    html = html.replace(
+        f"{stock_name}（{ts_code}）过去一年周期波动分析（移动版）",
+        f"{stock_name}（{ts_code}）{asset_label}过去一年周期波动分析（移动版）",
+    )
+    return html
 
 
 def build_output_path(output_arg: str, stock_name: str, ts_code: str, end_date: str) -> Path:

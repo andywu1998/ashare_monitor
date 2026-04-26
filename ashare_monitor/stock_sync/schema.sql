@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS stock_daily (
     ts_code VARCHAR(16) NOT NULL,
     trade_date DATE NOT NULL,
+    asset_type CHAR(1) NOT NULL DEFAULT 'E',
     open DECIMAL(12,4) NULL,
     high DECIMAL(12,4) NULL,
     low DECIMAL(12,4) NULL,
@@ -10,14 +11,24 @@ CREATE TABLE IF NOT EXISTS stock_daily (
     pct_chg DECIMAL(10,4) NULL,
     vol DECIMAL(20,4) NULL,
     amount DECIMAL(20,4) NULL,
+    ann_date DATE NULL,
+    unit_nav DECIMAL(16,6) NULL,
+    accum_nav DECIMAL(16,6) NULL,
+    accum_div DECIMAL(16,6) NULL,
+    net_asset DECIMAL(20,4) NULL,
+    total_netasset DECIMAL(20,4) NULL,
+    adj_nav DECIMAL(16,6) NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (ts_code, trade_date),
-    KEY idx_trade_date (trade_date)
+    KEY idx_trade_date (trade_date),
+    KEY idx_trade_date_pct_chg (trade_date, pct_chg),
+    KEY idx_asset_trade_date (asset_type, trade_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stock_basic (
     ts_code VARCHAR(16) NOT NULL,
+    asset_type CHAR(1) NOT NULL DEFAULT 'E',
     symbol VARCHAR(16) NULL,
     name VARCHAR(64) NULL,
     area VARCHAR(64) NULL,
@@ -28,9 +39,31 @@ CREATE TABLE IF NOT EXISTS stock_basic (
     list_date DATE NULL,
     delist_date DATE NULL,
     is_hs VARCHAR(8) NULL,
+    management VARCHAR(128) NULL,
+    custodian VARCHAR(128) NULL,
+    invest_type VARCHAR(64) NULL,
+    fund_type VARCHAR(64) NULL,
+    benchmark VARCHAR(255) NULL,
+    due_date DATE NULL,
+    issue_amount DECIMAL(20,4) NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (ts_code),
     KEY idx_name (name),
-    KEY idx_list_status (list_status)
+    KEY idx_list_status (list_status),
+    KEY idx_asset_type_status (asset_type, list_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS market_breadth_daily (
+    trade_date DATE NOT NULL,
+    total_count INT NOT NULL,
+    up_count INT NOT NULL,
+    down_count INT NOT NULL,
+    flat_count INT NOT NULL,
+    up_ratio_pct DECIMAL(8,2) NOT NULL,
+    avg_pct_chg DECIMAL(10,4) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (trade_date),
+    KEY idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

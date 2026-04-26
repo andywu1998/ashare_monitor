@@ -14,6 +14,7 @@ from .db import (
     execute_sql_file,
     fetch_stock_basic_rows,
     fetch_stock_basic_ts_codes,
+    upsert_market_breadth_daily_for_range,
     upsert_stock_basic,
     upsert_stock_daily,
 )
@@ -294,8 +295,9 @@ def main():
             else:
                 failed += 1
 
+    breadth_rows = upsert_market_breadth_daily_for_range(start_date, real_end_date)
     log(
-        f"completed total_stocks={len(pending_stocks)} success={success} failed={failed} total_fetched={total_fetched} total_written={total_written} window={start_date}..{real_end_date}"
+        f"completed total_stocks={len(pending_stocks)} success={success} failed={failed} total_fetched={total_fetched} total_written={total_written} breadth_rows={breadth_rows} window={start_date}..{real_end_date}"
     )
 
 

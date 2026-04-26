@@ -86,6 +86,46 @@
       font-size: 14px;
       box-sizing: border-box;
     }
+    .suggest-wrap {
+      position: relative;
+    }
+    .suggest-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 30;
+      background: #fff;
+      border: 1px solid #dbe3ee;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+      max-height: 260px;
+      overflow: auto;
+      display: none;
+    }
+    .suggest-list.show {
+      display: block;
+    }
+    .suggest-item {
+      padding: 8px 10px;
+      font-size: 13px;
+      border-bottom: 1px solid #eef2f7;
+      cursor: pointer;
+      line-height: 1.4;
+    }
+    .suggest-item:last-child {
+      border-bottom: none;
+    }
+    .suggest-item:hover,
+    .suggest-item.active {
+      background: #eff6ff;
+    }
+    .suggest-item .muted {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+      color: #64748b;
+    }
     .actions {
       margin-top: 12px;
       display: flex;
@@ -285,17 +325,23 @@
     <div class="layout">
       <div class="left-col">
         <div class="card">
-          <h1>A股周期分析服务</h1>
+          <h1>周期分析服务</h1>
           <div class="tabs">
             <button class="tab-btn active" data-tab="single">A股周期分析服务</button>
             <button class="tab-btn" data-tab="uptrend">上行周期股票筛选</button>
+            <button class="tab-btn" data-tab="fundSingle">基金周期分析服务</button>
+            <button class="tab-btn" data-tab="fundUptrend">上行周期基金筛选</button>
+            <button class="tab-btn" data-tab="breadth">历史涨跌统计</button>
           </div>
 
           <div id="panelSingle" class="tab-panel active">
             <div class="grid">
               <div>
                 <label>公司名</label>
-                <input id="name" value="中际旭创" />
+                <div class="suggest-wrap">
+                  <input id="name" value="中际旭创" autocomplete="off" />
+                  <div id="nameSuggest" class="suggest-list"></div>
+                </div>
               </div>
               <div>
                 <label>threshold</label>
@@ -403,6 +449,193 @@
             <div class="hint">点击任意股票后，在右侧复用同一份报告预览。</div>
           </div>
 
+          <div id="panelFundSingle" class="tab-panel">
+            <div class="grid">
+              <div>
+                <label>基金名</label>
+                <div class="suggest-wrap">
+                  <input id="fundName" value="易方达消费行业" autocomplete="off" />
+                  <div id="fundNameSuggest" class="suggest-list"></div>
+                </div>
+              </div>
+              <div>
+                <label>threshold</label>
+                <input id="fundThreshold" type="number" step="0.01" value="0.08" />
+              </div>
+              <div>
+                <label>min-gap</label>
+                <input id="fundMinGap" type="number" step="1" value="5" />
+              </div>
+              <div>
+                <label>lookback-days</label>
+                <input id="fundLookback" type="number" step="1" value="365" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="fundRunBtn">生成HTML报告</button>
+              <span id="fundSingleStatus" class="muted">等待执行</span>
+            </div>
+            <div class="hint">输入基金名直接生成周期报告。</div>
+          </div>
+
+          <div id="panelFundUptrend" class="tab-panel">
+            <div class="grid">
+              <div>
+                <label>threshold</label>
+                <input id="fundUpThreshold" type="number" step="0.01" value="0.08" />
+              </div>
+              <div>
+                <label>min-gap</label>
+                <input id="fundUpMinGap" type="number" step="1" value="5" />
+              </div>
+              <div>
+                <label>lookback-days</label>
+                <input id="fundUpLookback" type="number" step="1" value="365" />
+              </div>
+              <div>
+                <label>min-rows</label>
+                <input id="fundUpMinRows" type="number" step="1" value="60" />
+              </div>
+              <div>
+                <label>top-k (0=全部)</label>
+                <input id="fundUpTopK" type="number" step="1" value="150" />
+              </div>
+              <div>
+                <label>end-date (可选)</label>
+                <input id="fundUpEndDate" type="date" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="fundScanBtn">筛选上行基金</button>
+              <button id="fundClearBtn" class="secondary" type="button">清空列表</button>
+              <span id="fundUpStatus" class="muted">等待筛选</span>
+            </div>
+            <div id="fundUpError" class="error"></div>
+            <div id="fundUpMeta" class="uptrend-meta"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>基金</th>
+                    <th>代码</th>
+                    <th>最新收盘</th>
+                    <th>最近交易日</th>
+                    <th>最近周期涨幅</th>
+                    <th>距最后极值天数</th>
+                  </tr>
+                </thead>
+                <tbody id="fundUptrendBody">
+                  <tr><td colspan="6" class="muted">点击“筛选上行基金”加载列表</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="section-title">历史任务</div>
+            <div class="actions">
+              <div>
+                <label>状态过滤</label>
+                <select id="fundHistoryStatus">
+                  <option value="">全部</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="done">done</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <button id="refreshFundHistoryBtn" class="secondary" type="button">刷新历史任务</button>
+              <span id="fundHistoryStatusText" class="muted">等待加载</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务ID</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>耗时(ms)</th>
+                    <th>返回数</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody id="fundHistoryBody">
+                  <tr><td colspan="6" class="muted">点击“刷新历史任务”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="hint">点击任意基金后，在右侧复用同一份报告预览。</div>
+          </div>
+
+          <div id="panelBreadth" class="tab-panel">
+            <div class="grid">
+              <div>
+                <label>start-date (可选)</label>
+                <input id="breadthStartDate" type="date" />
+              </div>
+              <div>
+                <label>end-date (可选)</label>
+                <input id="breadthEndDate" type="date" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="breadthRunBtn">查询涨跌统计</button>
+              <button id="breadthReportBtn" class="secondary" type="button">生成可视化报告</button>
+              <button id="breadthClearBtn" class="secondary" type="button">清空列表</button>
+              <span id="breadthStatus" class="muted">等待查询</span>
+            </div>
+            <div id="breadthError" class="error"></div>
+            <div id="breadthMeta" class="uptrend-meta"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>交易日</th>
+                    <th>上涨</th>
+                    <th>下跌</th>
+                    <th>平盘</th>
+                    <th>总样本</th>
+                    <th>上涨占比</th>
+                    <th>平均涨跌幅</th>
+                  </tr>
+                </thead>
+                <tbody id="breadthBody">
+                  <tr><td colspan="7" class="muted">点击“查询涨跌统计”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="hint">右侧会自动加载该区间的完整统计报告。</div>
+            <div class="section-title">历史任务</div>
+            <div class="actions">
+              <div>
+                <label>状态过滤</label>
+                <select id="breadthHistoryStatus">
+                  <option value="">全部</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="done">done</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <button id="refreshBreadthHistoryBtn" class="secondary" type="button">刷新历史任务</button>
+              <span id="breadthHistoryStatusText" class="muted">等待加载</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务ID</th>
+                    <th>状态</th>
+                    <th>区间</th>
+                    <th>耗时(ms)</th>
+                    <th>条数</th>
+                    <th>缓存</th>
+                  </tr>
+                </thead>
+                <tbody id="breadthHistoryBody">
+                  <tr><td colspan="6" class="muted">点击“刷新历史任务”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div class="split-line"></div>
           <div id="error" class="error"></div>
           <div id="summary" class="summary"></div>
@@ -428,8 +661,17 @@
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
     const panelSingle = document.getElementById("panelSingle");
     const panelUptrend = document.getElementById("panelUptrend");
+    const panelFundSingle = document.getElementById("panelFundSingle");
+    const panelFundUptrend = document.getElementById("panelFundUptrend");
+    const panelBreadth = document.getElementById("panelBreadth");
     const runBtn = document.getElementById("runBtn");
     const singleStatusEl = document.getElementById("singleStatus");
+    const fundRunBtn = document.getElementById("fundRunBtn");
+    const fundSingleStatusEl = document.getElementById("fundSingleStatus");
+    const nameInput = document.getElementById("name");
+    const fundNameInput = document.getElementById("fundName");
+    const nameSuggestEl = document.getElementById("nameSuggest");
+    const fundNameSuggestEl = document.getElementById("fundNameSuggest");
     const scanBtn = document.getElementById("scanBtn");
     const clearBtn = document.getElementById("clearBtn");
     const upStatusEl = document.getElementById("upStatus");
@@ -440,6 +682,27 @@
     const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
     const historyStatusText = document.getElementById("historyStatusText");
     const historyBody = document.getElementById("historyBody");
+    const fundScanBtn = document.getElementById("fundScanBtn");
+    const fundClearBtn = document.getElementById("fundClearBtn");
+    const fundUpStatusEl = document.getElementById("fundUpStatus");
+    const fundUpErrorEl = document.getElementById("fundUpError");
+    const fundUpMetaEl = document.getElementById("fundUpMeta");
+    const fundUptrendBody = document.getElementById("fundUptrendBody");
+    const fundHistoryStatusSelect = document.getElementById("fundHistoryStatus");
+    const refreshFundHistoryBtn = document.getElementById("refreshFundHistoryBtn");
+    const fundHistoryStatusText = document.getElementById("fundHistoryStatusText");
+    const fundHistoryBody = document.getElementById("fundHistoryBody");
+    const breadthRunBtn = document.getElementById("breadthRunBtn");
+    const breadthReportBtn = document.getElementById("breadthReportBtn");
+    const breadthClearBtn = document.getElementById("breadthClearBtn");
+    const breadthStatusEl = document.getElementById("breadthStatus");
+    const breadthErrorEl = document.getElementById("breadthError");
+    const breadthMetaEl = document.getElementById("breadthMeta");
+    const breadthBody = document.getElementById("breadthBody");
+    const breadthHistoryStatusSelect = document.getElementById("breadthHistoryStatus");
+    const refreshBreadthHistoryBtn = document.getElementById("refreshBreadthHistoryBtn");
+    const breadthHistoryStatusText = document.getElementById("breadthHistoryStatusText");
+    const breadthHistoryBody = document.getElementById("breadthHistoryBody");
     const openBtn = document.getElementById("openBtn");
     const fsBtn = document.getElementById("fsBtn");
     const errEl = document.getElementById("error");
@@ -448,7 +711,13 @@
     const iframeWrap = document.getElementById("iframeWrap");
     let uptrendItems = [];
     let historyItems = [];
+    let fundUptrendItems = [];
+    let fundHistoryItems = [];
+    let breadthItems = [];
+    let breadthHistoryItems = [];
     let currentHtmlUrl = "";
+    let suggestTimer = null;
+    let activeSuggestBox = null;
 
     function setSingleStatus(text, cls) {
       singleStatusEl.className = cls || "muted";
@@ -460,9 +729,34 @@
       upStatusEl.textContent = text;
     }
 
+    function setFundSingleStatus(text, cls) {
+      fundSingleStatusEl.className = cls || "muted";
+      fundSingleStatusEl.textContent = text;
+    }
+
+    function setFundUpStatus(text, cls) {
+      fundUpStatusEl.className = cls || "muted";
+      fundUpStatusEl.textContent = text;
+    }
+
     function setHistoryStatus(text, cls) {
       historyStatusText.className = cls || "muted";
       historyStatusText.textContent = text;
+    }
+
+    function setFundHistoryStatus(text, cls) {
+      fundHistoryStatusText.className = cls || "muted";
+      fundHistoryStatusText.textContent = text;
+    }
+
+    function setBreadthStatus(text, cls) {
+      breadthStatusEl.className = cls || "muted";
+      breadthStatusEl.textContent = text;
+    }
+
+    function setBreadthHistoryStatus(text, cls) {
+      breadthHistoryStatusText.className = cls || "muted";
+      breadthHistoryStatusText.textContent = text;
     }
 
     function getVal(id) { return document.getElementById(id).value; }
@@ -474,6 +768,9 @@
       });
       panelSingle.classList.toggle("active", tab === "single");
       panelUptrend.classList.toggle("active", tab === "uptrend");
+      panelFundSingle.classList.toggle("active", tab === "fundSingle");
+      panelFundUptrend.classList.toggle("active", tab === "fundUptrend");
+      panelBreadth.classList.toggle("active", tab === "breadth");
     }
 
     function adjustIframeHeight() {
@@ -527,10 +824,91 @@
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    function hideSuggestBox(box) {
+      if (!box) return;
+      box.classList.remove("show");
+      box.innerHTML = "";
+      if (activeSuggestBox === box) activeSuggestBox = null;
+    }
+
+    function hideAllSuggestBoxes() {
+      hideSuggestBox(nameSuggestEl);
+      hideSuggestBox(fundNameSuggestEl);
+    }
+
+    async function fetchSuggestions(query, assetType) {
+      const q = String(query || "").trim();
+      if (!q) return [];
+      const params = new URLSearchParams({
+        query: q,
+        asset_type: assetType,
+        limit: "10",
+      });
+      const resp = await fetch(`/api/suggestions?${params.toString()}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "suggestions failed");
+      return data.items || [];
+    }
+
+    function renderSuggestItems(box, input, items) {
+      if (!items.length) {
+        hideSuggestBox(box);
+        return;
+      }
+      box.innerHTML = items.map((item) => `
+        <div class="suggest-item" data-name="${escHtml(item.name)}" data-code="${escHtml(item.ts_code)}">
+          ${escHtml(item.name)}
+          <span class="muted">${escHtml(item.ts_code)}</span>
+        </div>
+      `).join("");
+      box.classList.add("show");
+      activeSuggestBox = box;
+
+      Array.from(box.querySelectorAll(".suggest-item")).forEach((el) => {
+        el.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          input.value = el.dataset.name || input.value;
+          hideSuggestBox(box);
+        });
+      });
+    }
+
+    function bindSuggestInput(input, box, assetType) {
+      let reqToken = 0;
+      input.addEventListener("input", () => {
+        clearTimeout(suggestTimer);
+        suggestTimer = setTimeout(async () => {
+          const q = input.value.trim();
+          if (!q) {
+            hideSuggestBox(box);
+            return;
+          }
+          const curToken = ++reqToken;
+          try {
+            const items = await fetchSuggestions(q, assetType);
+            if (curToken !== reqToken) return;
+            renderSuggestItems(box, input, items);
+          } catch (_) {
+            hideSuggestBox(box);
+          }
+        }, 140);
+      });
+      input.addEventListener("focus", () => {
+        if (!input.value.trim()) return;
+        input.dispatchEvent(new Event("input"));
+      });
+      input.addEventListener("blur", () => {
+        setTimeout(() => hideSuggestBox(box), 150);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") hideSuggestBox(box);
+      });
+    }
+
     function renderSummary(summary) {
       if (!summary) { summaryEl.innerHTML = ""; return; }
       const items = [
-        ["股票", `${summary.stock_name} (${summary.ts_code})`],
+        ["标的", `${summary.stock_name} (${summary.ts_code})`],
         ["区间", `${summary.date_range[0]} ~ ${summary.date_range[1]}`],
         ["样本交易日", summary.sample_days],
         ["周期数", summary.cycle_count],
@@ -538,6 +916,23 @@
         ["收盘区间", `${summary.min_close} ~ ${summary.max_close}`],
         ["最新收盘", `${summary.latest_date} / ${summary.latest_close}`],
         ["参数", `threshold=${summary.threshold}, gap=${summary.min_gap}`],
+      ];
+      summaryEl.innerHTML = items.map(([k,v]) =>
+        `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`
+      ).join("");
+    }
+
+    function renderBreadthSummary(summary) {
+      if (!summary) { summaryEl.innerHTML = ""; return; }
+      const items = [
+        ["区间", `${summary.start_date || "-"} ~ ${summary.end_date || "-"}`],
+        ["交易日数", Number(summary.trading_days || 0)],
+        ["最新上涨/下跌", `${Number(summary.latest_up_count || 0)} / ${Number(summary.latest_down_count || 0)}`],
+        ["最新上涨占比", `${Number(summary.latest_up_ratio_pct || 0).toFixed(2)}%`],
+        ["区间平均上涨占比", `${Number(summary.avg_daily_up_ratio_pct || 0).toFixed(2)}%`],
+        ["多头日/空头日", `${Number(summary.bullish_days || 0)} / ${Number(summary.bearish_days || 0)}`],
+        ["上涨最多日", `${(summary.max_up_day || {}).trade_date || "-"} / ${Number((summary.max_up_day || {}).up_count || 0)}`],
+        ["下跌最多日", `${(summary.max_down_day || {}).trade_date || "-"} / ${Number((summary.max_down_day || {}).down_count || 0)}`],
       ];
       summaryEl.innerHTML = items.map(([k,v]) =>
         `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`
@@ -554,6 +949,7 @@
           threshold: toNum("threshold"),
           min_gap: toNum("minGap"),
           lookback_days: toNum("lookback"),
+          asset_type: "E",
         };
         const resp = await fetch("/api/reports", {
           method: "POST",
@@ -574,10 +970,50 @@
       }
     }
 
+    async function runFundReportByName() {
+      errEl.textContent = "";
+      setFundSingleStatus("生成中...", "muted");
+      openBtn.disabled = true;
+      try {
+        const body = {
+          name: getVal("fundName").trim(),
+          threshold: toNum("fundThreshold"),
+          min_gap: toNum("fundMinGap"),
+          lookback_days: toNum("fundLookback"),
+          asset_type: "F",
+        };
+        const resp = await fetch("/api/reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        currentHtmlUrl = data.html_url;
+        viewer.style.height = "72vh";
+        viewer.src = currentHtmlUrl;
+        openBtn.disabled = false;
+        renderSummary(data.summary);
+        setFundSingleStatus("生成成功", "ok");
+      } catch (e) {
+        setFundSingleStatus("生成失败", "error");
+        errEl.textContent = String(e.message || e);
+      }
+    }
+
+    function setReportStatus(assetType, text, cls) {
+      if ((assetType || "E") === "F") {
+        setFundUpStatus(text, cls);
+      } else {
+        setUpStatus(text, cls);
+      }
+    }
+
     async function runReportByCode(tsCode, options) {
       errEl.textContent = "";
       openBtn.disabled = true;
-      setUpStatus(`生成 ${tsCode} 报告中...`, "muted");
+      const assetType = (options.asset_type || "E").toUpperCase();
+      setReportStatus(assetType, `生成 ${tsCode} 报告中...`, "muted");
       try {
         const body = {
           ts_code: tsCode,
@@ -585,6 +1021,7 @@
           min_gap: options.min_gap,
           lookback_days: options.lookback_days,
           end_date: options.end_date || null,
+          asset_type: assetType,
         };
         const resp = await fetch("/api/reports/by-code", {
           method: "POST",
@@ -598,9 +1035,9 @@
         viewer.src = currentHtmlUrl;
         openBtn.disabled = false;
         renderSummary(data.summary);
-        setUpStatus(`报告已生成: ${data.summary.stock_name}`, "ok");
+        setReportStatus(assetType, `报告已生成: ${data.summary.stock_name}`, "ok");
       } catch (e) {
-        setUpStatus("报告生成失败", "error");
+        setReportStatus(assetType, "报告生成失败", "error");
         errEl.textContent = String(e.message || e);
       }
     }
@@ -613,6 +1050,24 @@
         min_rows: toNum("upMinRows"),
         top_k: toNum("upTopK"),
         end_date: getVal("upEndDate").trim(),
+      };
+    }
+
+    function getFundUptrendParams() {
+      return {
+        threshold: toNum("fundUpThreshold"),
+        min_gap: toNum("fundUpMinGap"),
+        lookback_days: toNum("fundUpLookback"),
+        min_rows: toNum("fundUpMinRows"),
+        top_k: toNum("fundUpTopK"),
+        end_date: getVal("fundUpEndDate").trim(),
+      };
+    }
+
+    function getBreadthParams() {
+      return {
+        start_date: getVal("breadthStartDate").trim(),
+        end_date: getVal("breadthEndDate").trim(),
       };
     }
 
@@ -629,6 +1084,27 @@
             <td>${escHtml(item.name)}</td>
             <td>${escHtml(item.ts_code)}</td>
             <td>${Number(item.last_close || 0).toFixed(2)}</td>
+            <td>${escHtml(item.last_trade_date)}</td>
+            <td class="${pctClass}">${pct}</td>
+            <td>${Number(item.since_last_pivot_days || 0)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderFundUptrendRows(items) {
+      if (!items.length) {
+        fundUptrendBody.innerHTML = '<tr><td colspan="6" class="muted">未筛选到符合条件的基金</td></tr>';
+        return;
+      }
+      fundUptrendBody.innerHTML = items.map((item, idx) => {
+        const pct = fmtPct(item.latest_cycle_chg_pct);
+        const pctClass = Number(item.latest_cycle_chg_pct) >= 0 ? "rise" : "fall";
+        return `
+          <tr data-code="${escHtml(item.ts_code)}" data-idx="${idx}">
+            <td>${escHtml(item.name)}</td>
+            <td>${escHtml(item.ts_code)}</td>
+            <td>${Number(item.last_close || 0).toFixed(4)}</td>
             <td>${escHtml(item.last_trade_date)}</td>
             <td class="${pctClass}">${pct}</td>
             <td>${Number(item.since_last_pivot_days || 0)}</td>
@@ -698,12 +1174,275 @@
       }
     }
 
+    async function fetchUptrendFunds() {
+      fundUpErrorEl.textContent = "";
+      setFundUpStatus("筛选中...", "muted");
+      try {
+        const p = getFundUptrendParams();
+        const query = new URLSearchParams({
+          threshold: String(p.threshold),
+          min_gap: String(p.min_gap),
+          lookback_days: String(p.lookback_days),
+          min_rows: String(p.min_rows),
+          top_k: String(p.top_k),
+        });
+        if (p.end_date) query.set("end_date", p.end_date);
+        const resp = await fetch(`/api/uptrend-funds?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        if (resp.status === 202 && data.task_id) {
+          setFundUpStatus("任务已提交，后台计算中...", "muted");
+          const deadline = Date.now() + 5 * 60 * 1000;
+          let taskData = null;
+          const pollUrl = data.poll_url || `/api/uptrend-stocks/tasks/${data.task_id}`;
+          while (Date.now() < deadline) {
+            await sleep(1500);
+            const taskResp = await fetch(pollUrl);
+            const taskJson = await taskResp.json();
+            if (taskResp.status === 500) {
+              throw new Error(taskJson.error || "async task failed");
+            }
+            if (!taskResp.ok) {
+              throw new Error(taskJson.detail || "task poll failed");
+            }
+            if (taskJson.status === "done") {
+              taskData = taskJson;
+              break;
+            }
+            if (taskJson.status === "error") {
+              throw new Error(taskJson.error || "async task failed");
+            }
+            setFundUpStatus(`后台计算中... 任务 ${data.task_id}`, "muted");
+          }
+          if (!taskData) throw new Error("任务超时，请稍后重试");
+          fundUptrendItems = taskData.items || [];
+          renderFundUptrendRows(fundUptrendItems);
+          fundUpMetaEl.textContent = `共筛选 ${taskData.count} 只，当前返回 ${taskData.returned} 只（按上行周期强度降序）`;
+          setFundUpStatus("筛选完成", "ok");
+          loadFundTaskHistory();
+          return;
+        }
+        fundUptrendItems = data.items || [];
+        renderFundUptrendRows(fundUptrendItems);
+        fundUpMetaEl.textContent = `共筛选 ${data.count} 只，当前返回 ${data.returned} 只（按上行周期强度降序）`;
+        setFundUpStatus("筛选完成", "ok");
+        loadFundTaskHistory();
+      } catch (e) {
+        fundUptrendItems = [];
+        renderFundUptrendRows(fundUptrendItems);
+        setFundUpStatus("筛选失败", "error");
+        fundUpErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    function renderBreadthRows(items) {
+      if (!items.length) {
+        breadthBody.innerHTML = '<tr><td colspan="7" class="muted">该区间没有可用数据</td></tr>';
+        return;
+      }
+      breadthBody.innerHTML = items.map((item) => {
+        const up = Number(item.up_count || 0);
+        const down = Number(item.down_count || 0);
+        const avg = Number(item.avg_pct_chg || 0);
+        const upRatio = Number(item.up_ratio_pct || 0);
+        const ratioClass = up > down ? "rise" : (up < down ? "fall" : "");
+        return `
+          <tr data-trade-date="${escHtml(item.trade_date)}">
+            <td>${escHtml(item.trade_date)}</td>
+            <td class="rise">${up}</td>
+            <td class="fall">${down}</td>
+            <td>${Number(item.flat_count || 0)}</td>
+            <td>${Number(item.total_count || 0)}</td>
+            <td class="${ratioClass}">${upRatio.toFixed(2)}%</td>
+            <td class="${avg >= 0 ? "rise" : "fall"}">${avg.toFixed(2)}%</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderBreadthMeta(data, withReport) {
+      const m = data.metrics || {};
+      const mode = data.async_mode ? "异步" : "同步";
+      const cacheText = m.cache_hit ? "命中缓存" : "实时计算";
+      const sampled = Number(data.sampled_count || 0);
+      const total = Number(data.count || 0);
+      breadthMetaEl.textContent =
+        `区间 ${data.start_date} ~ ${data.end_date}，${mode}，${cacheText}，返回 ${sampled}/${total} 条，query ${Number(m.query_ms || 0)}ms，render ${Number(m.render_ms || 0)}ms，总计 ${Number(m.total_ms || 0)}ms` +
+        (withReport && data.html_url ? "，报告已生成" : "");
+    }
+
+    async function pollBreadthTask(taskId, pollUrl) {
+      const deadline = Date.now() + 8 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await sleep(1500);
+        const taskResp = await fetch(pollUrl || `/api/market-breadth-daily/tasks/${taskId}`);
+        const taskJson = await taskResp.json();
+        if (taskResp.status === 500) {
+          throw new Error(taskJson.error || "async task failed");
+        }
+        if (!taskResp.ok) {
+          throw new Error(taskJson.detail || "task poll failed");
+        }
+        if (taskJson.status === "done") return taskJson;
+        if (taskJson.status === "error") {
+          throw new Error(taskJson.error || "async task failed");
+        }
+        setBreadthStatus(`后台执行中... 任务 ${taskId}`, "muted");
+      }
+      throw new Error("任务超时，请稍后在历史任务查看");
+    }
+
+    async function runBreadthQuery(withReport) {
+      breadthErrorEl.textContent = "";
+      setBreadthStatus(withReport ? "生成报告中..." : "查询中...", "muted");
+      openBtn.disabled = true;
+      try {
+        const p = getBreadthParams();
+        const query = new URLSearchParams({
+          with_report: withReport ? "true" : "false",
+          async_mode: "true",
+          sample_points: "300",
+        });
+        if (p.start_date) query.set("start_date", p.start_date);
+        if (p.end_date) query.set("end_date", p.end_date);
+        const resp = await fetch(`/api/market-breadth-daily?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+
+        let resultData = data;
+        if (resp.status === 202 && data.task_id) {
+          setBreadthStatus("任务已提交，后台处理中...", "muted");
+          resultData = await pollBreadthTask(data.task_id, data.poll_url);
+        }
+
+        breadthItems = resultData.items || [];
+        renderBreadthRows(breadthItems);
+        renderBreadthSummary(resultData.summary);
+        renderBreadthMeta(resultData, withReport);
+        setBreadthStatus(withReport ? "报告生成完成" : "查询完成", "ok");
+
+        if (resultData.html_url) {
+          currentHtmlUrl = resultData.html_url;
+          viewer.style.height = "72vh";
+          viewer.src = currentHtmlUrl;
+          openBtn.disabled = false;
+        } else if (!withReport) {
+          currentHtmlUrl = "";
+        }
+        loadBreadthTaskHistory();
+      } catch (e) {
+        breadthItems = [];
+        renderBreadthRows(breadthItems);
+        renderBreadthSummary(null);
+        setBreadthStatus(withReport ? "报告生成失败" : "查询失败", "error");
+        breadthErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function fetchMarketBreadth() {
+      await runBreadthQuery(false);
+    }
+
+    async function generateBreadthReport() {
+      await runBreadthQuery(true);
+    }
+
+    function renderBreadthHistoryRows(items) {
+      if (!items.length) {
+        breadthHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
+        return;
+      }
+      breadthHistoryBody.innerHTML = items.map((item) => {
+        const cls = `tag ${escHtml(item.status || "")}`;
+        const range = `${item.start_date || "-"} ~ ${item.end_date || "-"}`;
+        const ms = Number((item.metrics || {}).total_ms || 0);
+        return `
+          <tr class="history-row" data-breadth-task-id="${escHtml(item.task_id)}">
+            <td>${escHtml(item.task_id)}</td>
+            <td><span class="${cls}">${escHtml(item.status || "-")}</span></td>
+            <td>${escHtml(range)}</td>
+            <td>${ms || "-"}</td>
+            <td>${Number(item.count || 0)}</td>
+            <td>${item.cache_hit ? "是" : "否"}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function loadBreadthTaskHistory() {
+      setBreadthHistoryStatus("加载中...", "muted");
+      try {
+        const query = new URLSearchParams({
+          page: "1",
+          page_size: "20",
+        });
+        const s = breadthHistoryStatusSelect.value.trim();
+        if (s) query.set("status", s);
+        const resp = await fetch(`/api/market-breadth-daily/task-history?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "history request failed");
+        breadthHistoryItems = data.items || [];
+        renderBreadthHistoryRows(breadthHistoryItems);
+        setBreadthHistoryStatus(`已加载 ${breadthHistoryItems.length} / 总计 ${data.total || 0}`, "ok");
+      } catch (e) {
+        breadthHistoryItems = [];
+        renderBreadthHistoryRows(breadthHistoryItems);
+        setBreadthHistoryStatus("加载失败", "error");
+        breadthErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadBreadthTask(taskId) {
+      setBreadthStatus(`加载任务 ${taskId} 中...`, "muted");
+      try {
+        const resp = await fetch(`/api/market-breadth-daily/tasks/${encodeURIComponent(taskId)}`);
+        const data = await resp.json();
+        if (resp.status === 500) throw new Error(data.error || "task failed");
+        if (!resp.ok) throw new Error(data.detail || "load task failed");
+        breadthItems = data.items || [];
+        renderBreadthRows(breadthItems);
+        renderBreadthSummary(data.summary);
+        renderBreadthMeta(data, Boolean(data.with_report));
+        setBreadthStatus("历史任务已加载", "ok");
+
+        if (data.html_url) {
+          currentHtmlUrl = data.html_url;
+          viewer.style.height = "72vh";
+          viewer.src = currentHtmlUrl;
+          openBtn.disabled = false;
+        }
+      } catch (e) {
+        setBreadthStatus("加载历史任务失败", "error");
+        breadthErrorEl.textContent = String(e.message || e);
+      }
+    }
+
     function renderHistoryRows(items) {
       if (!items.length) {
         historyBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
         return;
       }
       historyBody.innerHTML = items.map((item) => {
+        const cls = `tag ${escHtml(item.status || "")}`;
+        return `
+          <tr class="history-row" data-task-id="${escHtml(item.task_id)}">
+            <td>${escHtml(item.task_id)}</td>
+            <td><span class="${cls}">${escHtml(item.status || "-")}</span></td>
+            <td>${escHtml(fmtDateTime(item.created_at))}</td>
+            <td>${item.duration_ms == null ? "-" : Number(item.duration_ms)}</td>
+            <td>${item.returned == null ? "-" : Number(item.returned)}</td>
+            <td>${escHtml(fmtParams(item.params))}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderFundHistoryRows(items) {
+      if (!items.length) {
+        fundHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
+        return;
+      }
+      fundHistoryBody.innerHTML = items.map((item) => {
         const cls = `tag ${escHtml(item.status || "")}`;
         return `
           <tr class="history-row" data-task-id="${escHtml(item.task_id)}">
@@ -741,6 +1480,29 @@
       }
     }
 
+    async function loadFundTaskHistory() {
+      setFundHistoryStatus("加载中...", "muted");
+      try {
+        const query = new URLSearchParams({
+          page: "1",
+          page_size: "20",
+        });
+        const s = fundHistoryStatusSelect.value.trim();
+        if (s) query.set("status", s);
+        const resp = await fetch(`/api/uptrend-funds/task-history?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "history request failed");
+        fundHistoryItems = data.items || [];
+        renderFundHistoryRows(fundHistoryItems);
+        setFundHistoryStatus(`已加载 ${fundHistoryItems.length} / 总计 ${data.total || 0}`, "ok");
+      } catch (e) {
+        fundHistoryItems = [];
+        renderFundHistoryRows(fundHistoryItems);
+        setFundHistoryStatus("加载失败", "error");
+        fundUpErrorEl.textContent = String(e.message || e);
+      }
+    }
+
     async function loadTaskItems(taskId) {
       setUpStatus(`加载任务 ${taskId} 结果中...`, "muted");
       try {
@@ -757,15 +1519,35 @@
       }
     }
 
+    async function loadFundTaskItems(taskId) {
+      setFundUpStatus(`加载任务 ${taskId} 结果中...`, "muted");
+      try {
+        const resp = await fetch(`/api/uptrend-stocks/tasks/${encodeURIComponent(taskId)}/items?page=1&page_size=500`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.error || "load task items failed");
+        fundUptrendItems = data.items || [];
+        renderFundUptrendRows(fundUptrendItems);
+        fundUpMetaEl.textContent = `任务 ${taskId} | 返回 ${fundUptrendItems.length} 条`;
+        setFundUpStatus("历史任务结果已加载", "ok");
+      } catch (e) {
+        setFundUpStatus("加载历史任务失败", "error");
+        fundUpErrorEl.textContent = String(e.message || e);
+      }
+    }
+
     tabButtons.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
 
     runBtn.addEventListener("click", runReportByName);
+    fundRunBtn.addEventListener("click", runFundReportByName);
 
     scanBtn.addEventListener("click", fetchUptrendStocks);
     refreshHistoryBtn.addEventListener("click", loadTaskHistory);
     historyStatusSelect.addEventListener("change", loadTaskHistory);
+    fundScanBtn.addEventListener("click", fetchUptrendFunds);
+    refreshFundHistoryBtn.addEventListener("click", loadFundTaskHistory);
+    fundHistoryStatusSelect.addEventListener("change", loadFundTaskHistory);
 
     clearBtn.addEventListener("click", () => {
       uptrendItems = [];
@@ -773,6 +1555,26 @@
       upErrorEl.textContent = "";
       renderUptrendRows(uptrendItems);
       setUpStatus("已清空", "muted");
+    });
+    fundClearBtn.addEventListener("click", () => {
+      fundUptrendItems = [];
+      fundUpMetaEl.textContent = "";
+      fundUpErrorEl.textContent = "";
+      renderFundUptrendRows(fundUptrendItems);
+      setFundUpStatus("已清空", "muted");
+    });
+
+    breadthRunBtn.addEventListener("click", fetchMarketBreadth);
+    breadthReportBtn.addEventListener("click", generateBreadthReport);
+    refreshBreadthHistoryBtn.addEventListener("click", loadBreadthTaskHistory);
+    breadthHistoryStatusSelect.addEventListener("change", loadBreadthTaskHistory);
+    breadthClearBtn.addEventListener("click", () => {
+      breadthItems = [];
+      breadthMetaEl.textContent = "";
+      breadthErrorEl.textContent = "";
+      renderBreadthRows(breadthItems);
+      renderBreadthSummary(null);
+      setBreadthStatus("已清空", "muted");
     });
 
     historyBody.addEventListener("click", async (event) => {
@@ -798,7 +1600,52 @@
         min_gap: p.min_gap,
         lookback_days: p.lookback_days,
         end_date: p.end_date,
+        asset_type: "E",
       });
+    });
+
+    fundHistoryBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-task-id]");
+      if (!row) return;
+      const taskId = row.dataset.taskId;
+      if (!taskId) return;
+      Array.from(fundHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await loadFundTaskItems(taskId);
+    });
+
+    fundUptrendBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-code]");
+      if (!row) return;
+      const code = row.dataset.code;
+      if (!code) return;
+      Array.from(fundUptrendBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      const p = getFundUptrendParams();
+      await runReportByCode(code, {
+        threshold: p.threshold,
+        min_gap: p.min_gap,
+        lookback_days: p.lookback_days,
+        end_date: p.end_date,
+        asset_type: "F",
+      });
+    });
+
+    breadthBody.addEventListener("click", (event) => {
+      const row = event.target.closest("tr[data-trade-date]");
+      if (!row) return;
+      Array.from(breadthBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+    });
+
+    breadthHistoryBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-breadth-task-id]");
+      if (!row) return;
+      const taskId = row.dataset.breadthTaskId;
+      if (!taskId) return;
+      Array.from(breadthHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await loadBreadthTask(taskId);
     });
 
     openBtn.addEventListener("click", () => {
@@ -845,7 +1692,16 @@
     });
 
     switchTab("single");
+    bindSuggestInput(nameInput, nameSuggestEl, "E");
+    bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".suggest-wrap")) {
+        hideAllSuggestBoxes();
+      }
+    });
     loadTaskHistory();
+    loadFundTaskHistory();
+    loadBreadthTaskHistory();
   </script>
 </body>
 </html>
