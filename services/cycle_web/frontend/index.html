@@ -181,6 +181,55 @@
       color: #334155;
       font-weight: 600;
     }
+    .preview-mode {
+      font-size: 12px;
+      color: #64748b;
+    }
+    .hidden {
+      display: none !important;
+    }
+    .report-panel {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #fff;
+      min-height: 560px;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+    .report-empty {
+      height: 560px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      font-size: 14px;
+      background: #f8fafc;
+      border-radius: 8px;
+    }
+    .cycle-meta {
+      margin-bottom: 8px;
+      color: #475569;
+      font-size: 12px;
+    }
+    .chart-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+    #cycleCanvas {
+      width: 100%;
+      height: 420px;
+      display: block;
+    }
+    .report-table-wrap {
+      margin-top: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: auto;
+      max-height: 300px;
+      background: #fff;
+    }
     .iframe-wrap {
       border: 1px solid #e2e8f0;
       border-radius: 10px;
@@ -205,6 +254,16 @@
     .iframe-wrap:fullscreen iframe {
       height: 100%;
       min-height: 0;
+    }
+    .report-panel:fullscreen {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+    .report-panel:fullscreen #cycleCanvas {
+      height: 68vh;
     }
     .hint {
       color: #64748b;
@@ -311,6 +370,9 @@
       iframe {
         height: 72vh;
         min-height: 520px;
+      }
+      #cycleCanvas {
+        height: 360px;
       }
     }
     @media (max-width: 900px) {
@@ -644,14 +706,43 @@
       </div>
       <div class="card right-card">
         <div class="preview-toolbar">
-          <div class="preview-title">报告预览</div>
+          <div>
+            <div class="preview-title">报告预览</div>
+            <div id="previewMode" class="preview-mode">模式：暂无数据</div>
+          </div>
           <div class="actions" style="margin-top:0">
             <button id="openBtn" class="secondary" disabled>新窗口打开报告</button>
             <button id="fsBtn" class="secondary" type="button">全屏预览</button>
           </div>
         </div>
-        <div class="iframe-wrap" id="iframeWrap">
-          <iframe id="viewer" src="about:blank"></iframe>
+        <div id="reportPanel" class="report-panel">
+          <div id="reportEmpty" class="report-empty">请先在左侧执行分析任务</div>
+          <div id="reportContent" class="hidden">
+            <div id="reportMeta" class="cycle-meta"></div>
+            <div id="reportSummary" class="summary"></div>
+            <div class="chart-card" style="margin-top:8px">
+              <canvas id="cycleCanvas"></canvas>
+            </div>
+            <div class="report-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>起点</th>
+                    <th>终点</th>
+                    <th>交易日</th>
+                    <th>涨跌幅</th>
+                  </tr>
+                </thead>
+                <tbody id="cycleTableBody">
+                  <tr><td colspan="5" class="muted">暂无周期数据</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="iframe-wrap hidden" id="iframeWrap">
+          <iframe id="viewer" src="about:blank" title="导出HTML预览"></iframe>
         </div>
       </div>
     </div>
@@ -703,10 +794,18 @@
     const refreshBreadthHistoryBtn = document.getElementById("refreshBreadthHistoryBtn");
     const breadthHistoryStatusText = document.getElementById("breadthHistoryStatusText");
     const breadthHistoryBody = document.getElementById("breadthHistoryBody");
+    const previewModeEl = document.getElementById("previewMode");
     const openBtn = document.getElementById("openBtn");
     const fsBtn = document.getElementById("fsBtn");
     const errEl = document.getElementById("error");
     const summaryEl = document.getElementById("summary");
+    const reportPanel = document.getElementById("reportPanel");
+    const reportEmptyEl = document.getElementById("reportEmpty");
+    const reportContentEl = document.getElementById("reportContent");
+    const reportMetaEl = document.getElementById("reportMeta");
+    const reportSummaryEl = document.getElementById("reportSummary");
+    const cycleCanvas = document.getElementById("cycleCanvas");
+    const cycleTableBody = document.getElementById("cycleTableBody");
     const viewer = document.getElementById("viewer");
     const iframeWrap = document.getElementById("iframeWrap");
     let uptrendItems = [];
@@ -716,6 +815,8 @@
     let breadthItems = [];
     let breadthHistoryItems = [];
     let currentHtmlUrl = "";
+    let currentReportData = null;
+    let reportRenderMode = "none";
     let suggestTimer = null;
     let activeSuggestBox = null;
 
@@ -791,6 +892,186 @@
       } catch (_) {
         // no-op
       }
+    }
+
+    function fmtNum(v, digits = 2) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "n/a";
+      return Number(v).toFixed(digits);
+    }
+
+    function updatePreviewMode(text) {
+      previewModeEl.textContent = `模式：${text}`;
+    }
+
+    function showJsonPanel() {
+      reportPanel.classList.remove("hidden");
+      iframeWrap.classList.add("hidden");
+    }
+
+    function showHtmlPanel() {
+      reportPanel.classList.add("hidden");
+      iframeWrap.classList.remove("hidden");
+    }
+
+    function clearCycleReportView(message) {
+      currentReportData = null;
+      reportEmptyEl.textContent = message || "请先在左侧执行分析任务";
+      reportEmptyEl.classList.remove("hidden");
+      reportContentEl.classList.add("hidden");
+      reportSummaryEl.innerHTML = "";
+      cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
+      updatePreviewMode("暂无数据");
+      reportRenderMode = "none";
+      showJsonPanel();
+    }
+
+    function renderCyclePanelSummary(summary) {
+      if (!summary) {
+        reportSummaryEl.innerHTML = "";
+        return;
+      }
+      const items = [
+        ["标的", `${summary.stock_name || "-"} (${summary.ts_code || "-"})`],
+        ["区间", `${(summary.date_range || [])[0] || "-"} ~ ${(summary.date_range || [])[1] || "-"}`],
+        ["样本交易日", Number(summary.sample_days || 0)],
+        ["周期数", Number(summary.cycle_count || 0)],
+        ["极值点", Number(summary.pivot_count || 0)],
+        ["最新收盘", `${summary.latest_date || "-"} / ${fmtNum(summary.latest_close, 4)}`],
+        ["最新涨跌幅", fmtPct(summary.latest_pct_chg)],
+        ["成交额", fmtNum(summary.latest_amount, 2)],
+      ];
+      reportSummaryEl.innerHTML = items.map(([k, v]) =>
+        `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`
+      ).join("");
+    }
+
+    function renderCycleRows(cycles) {
+      if (!Array.isArray(cycles) || !cycles.length) {
+        cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
+        return;
+      }
+      cycleTableBody.innerHTML = cycles.map((c) => {
+        const pct = c.chg_pct === null || c.chg_pct === undefined ? "n/a" : `${Number(c.chg_pct).toFixed(2)}%`;
+        const cls = Number(c.chg_pct || 0) >= 0 ? "rise" : "fall";
+        return `
+          <tr>
+            <td>${Number(c.index || 0)}</td>
+            <td>${escHtml(c.start_date || "-")} ${escHtml(c.start_type || "-")} ${fmtNum(c.start_price, 4)}</td>
+            <td>${escHtml(c.end_date || "-")} ${escHtml(c.end_type || "-")} ${fmtNum(c.end_price, 4)}</td>
+            <td>${Number(c.trade_days || 0)}</td>
+            <td class="${cls}">${pct}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function drawCycleCanvas(reportData) {
+      if (!cycleCanvas) return;
+      const ctx = cycleCanvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(320, cycleCanvas.clientWidth || 320);
+      const height = Math.max(280, cycleCanvas.clientHeight || 280);
+      cycleCanvas.width = Math.floor(width * dpr);
+      cycleCanvas.height = Math.floor(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
+      if (!candles.length) return;
+      const pivots = Array.isArray(reportData?.pivots) ? reportData.pivots : [];
+
+      const pad = { l: 56, r: 14, t: 14, b: 28 };
+      const cw = width - pad.l - pad.r;
+      const ch = height - pad.t - pad.b;
+      const highs = candles.map((x) => Number(x.high || 0));
+      const lows = candles.map((x) => Number(x.low || 0));
+      const maxP = Math.max(...highs);
+      const minP = Math.min(...lows);
+      const span = Math.max(0.01, maxP - minP);
+      const xOf = (i) => pad.l + (i / Math.max(1, candles.length - 1)) * cw;
+      const yOf = (p) => pad.t + ((maxP - p) / span) * ch;
+
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t);
+      ctx.lineTo(pad.l, pad.t + ch);
+      ctx.lineTo(pad.l + cw, pad.t + ch);
+      ctx.stroke();
+
+      ctx.fillStyle = "#64748b";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(maxP.toFixed(2), pad.l - 6, pad.t + 6);
+      ctx.fillText(minP.toFixed(2), pad.l - 6, pad.t + ch - 6);
+
+      const barW = Math.max(1, Math.min(10, (cw / Math.max(10, candles.length)) * 0.55));
+      candles.forEach((x, i) => {
+        const open = Number(x.open || 0);
+        const high = Number(x.high || 0);
+        const low = Number(x.low || 0);
+        const close = Number(x.close || 0);
+        const px = xOf(i);
+        const yH = yOf(high);
+        const yL = yOf(low);
+        const yO = yOf(open);
+        const yC = yOf(close);
+        const color = close >= open ? "#dc2626" : "#059669";
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px, yH);
+        ctx.lineTo(px, yL);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.fillRect(px - barW / 2, Math.min(yO, yC), barW, Math.max(1, Math.abs(yO - yC)));
+      });
+
+      if (pivots.length > 1) {
+        ctx.strokeStyle = "#f59e0b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        pivots.forEach((p, idx) => {
+          const px = xOf(Number(p.idx || 0));
+          const py = yOf(Number(p.price || 0));
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+    }
+
+    function renderCycleReportData(reportData, sourceText) {
+      currentReportData = reportData;
+      reportRenderMode = "json";
+      reportEmptyEl.classList.add("hidden");
+      reportContentEl.classList.remove("hidden");
+      showJsonPanel();
+      renderCyclePanelSummary(reportData?.summary || null);
+      renderCycleRows(reportData?.cycles || []);
+      drawCycleCanvas(reportData || {});
+      const summary = reportData?.summary || {};
+      reportMetaEl.textContent = `${sourceText || "JSON渲染"} | ${summary.stock_name || "-"} (${summary.ts_code || "-"}) | threshold=${summary.threshold || "-"} | min_gap=${summary.min_gap || "-"}`;
+      updatePreviewMode("JSON图表渲染（HTML可导出）");
+    }
+
+    function showHtmlPreview(htmlUrl, modeText) {
+      if (!htmlUrl) return;
+      currentHtmlUrl = htmlUrl;
+      reportRenderMode = "html";
+      viewer.style.height = "72vh";
+      viewer.src = currentHtmlUrl;
+      showHtmlPanel();
+      updatePreviewMode(modeText || "HTML预览");
+      openBtn.disabled = false;
+    }
+
+    async function loadReportData(dataUrl) {
+      if (!dataUrl) return null;
+      const resp = await fetch(dataUrl);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "load report data failed");
+      return data;
     }
 
     function escHtml(s) {
@@ -950,6 +1231,8 @@
           min_gap: toNum("minGap"),
           lookback_days: toNum("lookback"),
           asset_type: "E",
+          output_format: "both",
+          template_version: "cycle_v1",
         };
         const resp = await fetch("/api/reports", {
           method: "POST",
@@ -958,11 +1241,40 @@
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "request failed");
-        currentHtmlUrl = data.html_url;
-        viewer.style.height = "72vh";
-        viewer.src = currentHtmlUrl;
-        openBtn.disabled = false;
-        renderSummary(data.summary);
+        let finalData = data;
+        if (resp.status === 202 && data.task_id) {
+          const deadline = Date.now() + 5 * 60 * 1000;
+          const pollUrl = data.poll_url || `/api/report-tasks/${data.task_id}`;
+          while (Date.now() < deadline) {
+            await sleep(1200);
+            const pollResp = await fetch(pollUrl);
+            const pollData = await pollResp.json();
+            if (pollResp.status === 500) throw new Error(pollData.error || "task failed");
+            if (!pollResp.ok) throw new Error(pollData.detail || "task failed");
+            if (pollData.status === "done") {
+              finalData = pollData;
+              break;
+            }
+          }
+        }
+        let rendered = false;
+        if (finalData.json_url) {
+          try {
+            const reportData = await loadReportData(finalData.json_url);
+            if (reportData) {
+              renderCycleReportData(reportData, "A股周期报告");
+              rendered = true;
+            }
+          } catch (_) {
+            // fallback to html preview
+          }
+        }
+        currentHtmlUrl = finalData.html_url || "";
+        openBtn.disabled = !currentHtmlUrl;
+        if (!rendered && currentHtmlUrl) {
+          showHtmlPreview(currentHtmlUrl, "A股周期报告（HTML预览）");
+        }
+        renderSummary(finalData.summary);
         setSingleStatus("生成成功", "ok");
       } catch (e) {
         setSingleStatus("生成失败", "error");
@@ -981,6 +1293,8 @@
           min_gap: toNum("fundMinGap"),
           lookback_days: toNum("fundLookback"),
           asset_type: "F",
+          output_format: "both",
+          template_version: "cycle_v1",
         };
         const resp = await fetch("/api/reports", {
           method: "POST",
@@ -989,11 +1303,40 @@
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "request failed");
-        currentHtmlUrl = data.html_url;
-        viewer.style.height = "72vh";
-        viewer.src = currentHtmlUrl;
-        openBtn.disabled = false;
-        renderSummary(data.summary);
+        let finalData = data;
+        if (resp.status === 202 && data.task_id) {
+          const deadline = Date.now() + 5 * 60 * 1000;
+          const pollUrl = data.poll_url || `/api/report-tasks/${data.task_id}`;
+          while (Date.now() < deadline) {
+            await sleep(1200);
+            const pollResp = await fetch(pollUrl);
+            const pollData = await pollResp.json();
+            if (pollResp.status === 500) throw new Error(pollData.error || "task failed");
+            if (!pollResp.ok) throw new Error(pollData.detail || "task failed");
+            if (pollData.status === "done") {
+              finalData = pollData;
+              break;
+            }
+          }
+        }
+        let rendered = false;
+        if (finalData.json_url) {
+          try {
+            const reportData = await loadReportData(finalData.json_url);
+            if (reportData) {
+              renderCycleReportData(reportData, "基金周期报告");
+              rendered = true;
+            }
+          } catch (_) {
+            // fallback to html preview
+          }
+        }
+        currentHtmlUrl = finalData.html_url || "";
+        openBtn.disabled = !currentHtmlUrl;
+        if (!rendered && currentHtmlUrl) {
+          showHtmlPreview(currentHtmlUrl, "基金周期报告（HTML预览）");
+        }
+        renderSummary(finalData.summary);
         setFundSingleStatus("生成成功", "ok");
       } catch (e) {
         setFundSingleStatus("生成失败", "error");
@@ -1022,6 +1365,8 @@
           lookback_days: options.lookback_days,
           end_date: options.end_date || null,
           asset_type: assetType,
+          output_format: "both",
+          template_version: "cycle_v1",
         };
         const resp = await fetch("/api/reports/by-code", {
           method: "POST",
@@ -1030,12 +1375,41 @@
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "request failed");
-        currentHtmlUrl = data.html_url;
-        viewer.style.height = "72vh";
-        viewer.src = currentHtmlUrl;
-        openBtn.disabled = false;
-        renderSummary(data.summary);
-        setReportStatus(assetType, `报告已生成: ${data.summary.stock_name}`, "ok");
+        let finalData = data;
+        if (resp.status === 202 && data.task_id) {
+          const deadline = Date.now() + 5 * 60 * 1000;
+          const pollUrl = data.poll_url || `/api/report-tasks/${data.task_id}`;
+          while (Date.now() < deadline) {
+            await sleep(1200);
+            const pollResp = await fetch(pollUrl);
+            const pollData = await pollResp.json();
+            if (pollResp.status === 500) throw new Error(pollData.error || "task failed");
+            if (!pollResp.ok) throw new Error(pollData.detail || "task failed");
+            if (pollData.status === "done") {
+              finalData = pollData;
+              break;
+            }
+          }
+        }
+        let rendered = false;
+        if (finalData.json_url) {
+          try {
+            const reportData = await loadReportData(finalData.json_url);
+            if (reportData) {
+              renderCycleReportData(reportData, `${assetType === "F" ? "基金" : "A股"}周期报告`);
+              rendered = true;
+            }
+          } catch (_) {
+            // fallback to html preview
+          }
+        }
+        currentHtmlUrl = finalData.html_url || "";
+        openBtn.disabled = !currentHtmlUrl;
+        if (!rendered && currentHtmlUrl) {
+          showHtmlPreview(currentHtmlUrl, `${assetType === "F" ? "基金" : "A股"}周期报告（HTML预览）`);
+        }
+        renderSummary(finalData.summary);
+        setReportStatus(assetType, `报告已生成: ${finalData.summary.stock_name}`, "ok");
       } catch (e) {
         setReportStatus(assetType, "报告生成失败", "error");
         errEl.textContent = String(e.message || e);
@@ -1320,14 +1694,13 @@
         renderBreadthSummary(resultData.summary);
         renderBreadthMeta(resultData, withReport);
         setBreadthStatus(withReport ? "报告生成完成" : "查询完成", "ok");
-
         if (resultData.html_url) {
-          currentHtmlUrl = resultData.html_url;
-          viewer.style.height = "72vh";
-          viewer.src = currentHtmlUrl;
-          openBtn.disabled = false;
+          showHtmlPreview(resultData.html_url, "历史涨跌统计（HTML报告）");
         } else if (!withReport) {
           currentHtmlUrl = "";
+          if (reportRenderMode === "html") {
+            clearCycleReportView("当前为统计列表模式，右侧无周期图表。");
+          }
         }
         loadBreadthTaskHistory();
       } catch (e) {
@@ -1406,10 +1779,7 @@
         setBreadthStatus("历史任务已加载", "ok");
 
         if (data.html_url) {
-          currentHtmlUrl = data.html_url;
-          viewer.style.height = "72vh";
-          viewer.src = currentHtmlUrl;
-          openBtn.disabled = false;
+          showHtmlPreview(data.html_url, "历史涨跌统计（历史HTML报告）");
         }
       } catch (e) {
         setBreadthStatus("加载历史任务失败", "error");
@@ -1654,13 +2024,14 @@
 
     fsBtn.addEventListener("click", async () => {
       try {
-        if (document.fullscreenElement === iframeWrap) {
+        const target = reportRenderMode === "html" ? iframeWrap : reportPanel;
+        if (document.fullscreenElement === target) {
           await document.exitFullscreen();
           fsBtn.textContent = "全屏预览";
           return;
         }
-        if (iframeWrap.requestFullscreen) {
-          await iframeWrap.requestFullscreen();
+        if (target.requestFullscreen) {
+          await target.requestFullscreen();
           fsBtn.textContent = "退出全屏";
         }
       } catch (_) {
@@ -1669,10 +2040,11 @@
     });
 
     document.addEventListener("fullscreenchange", () => {
-      if (document.fullscreenElement !== iframeWrap) {
-        fsBtn.textContent = "全屏预览";
-        adjustIframeHeight();
-      }
+      const isHtmlFs = document.fullscreenElement === iframeWrap;
+      const isJsonFs = document.fullscreenElement === reportPanel;
+      if (!isHtmlFs && !isJsonFs) fsBtn.textContent = "全屏预览";
+      if (isHtmlFs || reportRenderMode === "html") adjustIframeHeight();
+      if (isJsonFs || reportRenderMode === "json") drawCycleCanvas(currentReportData || {});
     });
 
     viewer.addEventListener("load", () => {
@@ -1688,10 +2060,17 @@
 
     window.addEventListener("resize", () => {
       clearTimeout(window.__viewerResizeTimer);
-      window.__viewerResizeTimer = setTimeout(adjustIframeHeight, 120);
+      window.__viewerResizeTimer = setTimeout(() => {
+        if (reportRenderMode === "html") {
+          adjustIframeHeight();
+        } else if (reportRenderMode === "json") {
+          drawCycleCanvas(currentReportData || {});
+        }
+      }, 120);
     });
 
     switchTab("single");
+    clearCycleReportView();
     bindSuggestInput(nameInput, nameSuggestEl, "E");
     bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
     document.addEventListener("click", (event) => {

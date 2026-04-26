@@ -29,19 +29,13 @@ if str(BASE_DIR) not in sys.path:
 
 from ashare_monitor.cycle import find_uptrend_stocks
 from ashare_monitor.cycle.fund_screener import find_uptrend_funds
-from scripts.run_cycle_report import (
-    DbConfig,
-    fetch_daily,
-    fetch_daily_by_asset_type,
-    latest_trade_date,
-    make_html,
-    make_html_asset,
-    run_mysql,
-    resolve_stock,
-    resolve_fund,
-    zigzag_pivots,
+from ashare_monitor.cycle import zigzag_pivots
+from services.cycle_web.report_renderer import (
+    DEFAULT_TEMPLATE_VERSION,
+    build_cycle_payload,
+    render_cycle_report_html,
 )
-from services.cycle_web.suggestions import suggest_assets
+from services.cycle_web.suggestions import build_query_variants, suggest_assets
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
@@ -55,6 +49,7 @@ DEFAULT_MYSQL_PASSWORD = os.getenv("CYCLE_WEB_MYSQL_PASSWORD", os.getenv("MYSQL_
 DEFAULT_MYSQL_PORT = int(os.getenv("CYCLE_WEB_MYSQL_PORT", os.getenv("MYSQL_PORT", "3306")))
 UPTREND_TASK_WORKERS = max(1, int(os.getenv("UPTREND_TASK_WORKERS", "2")))
 BREADTH_TASK_WORKERS = max(1, int(os.getenv("BREADTH_TASK_WORKERS", "2")))
+REPORT_TASK_WORKERS = max(1, int(os.getenv("REPORT_TASK_WORKERS", "2")))
 BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS = max(
     30, int(os.getenv("BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS", "180"))
 )
@@ -68,8 +63,14 @@ UPTREND_TABLE_READY: set[tuple[str, int, str, str]] = set()
 BREADTH_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=BREADTH_TASK_WORKERS)
 BREADTH_TABLE_LOCK = Lock()
 BREADTH_TABLE_READY: set[tuple[str, int, str, str]] = set()
+REPORT_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=REPORT_TASK_WORKERS)
+REPORT_TABLE_LOCK = Lock()
+REPORT_TABLE_READY: set[tuple[str, int, str, str]] = set()
 BREADTH_CACHE_LOCK = Lock()
 BREADTH_RESULT_CACHE: dict[str, tuple[float, str]] = {}
+REPORT_CACHE_LOCK = Lock()
+REPORT_RESULT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+REPORT_CACHE_TTL_SEC = max(30, int(os.getenv("REPORT_CACHE_TTL_SEC", "1800")))
 
 
 def _normalize_password(raw: Optional[str]) -> str:
@@ -90,6 +91,169 @@ def _jsonify_value(value: Any) -> Any:
 
 def _jsonify_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: _jsonify_value(v) for k, v in row.items()}
+
+
+def _report_cache_key(
+    *,
+    mysql_cfg: dict,
+    asset_type: str,
+    ts_code: str,
+    threshold: float,
+    min_gap: int,
+    lookback_days: int,
+    end_date: Optional[str],
+    output_format: str,
+    template_version: str,
+) -> str:
+    return "|".join(
+        [
+            str(mysql_cfg.get("host", "")),
+            str(mysql_cfg.get("port", "")),
+            str(mysql_cfg.get("database", "")),
+            str(asset_type),
+            str(ts_code),
+            f"{float(threshold):.6f}",
+            str(int(min_gap)),
+            str(int(lookback_days)),
+            str(end_date or ""),
+            str(output_format or "html"),
+            str(template_version or DEFAULT_TEMPLATE_VERSION),
+        ]
+    )
+
+
+def _report_cache_get(key: str) -> Optional[dict]:
+    now = time.time()
+    with REPORT_CACHE_LOCK:
+        item = REPORT_RESULT_CACHE.get(key)
+        if not item:
+            return None
+        expire_at, payload = item
+        if now > expire_at:
+            del REPORT_RESULT_CACHE[key]
+            return None
+        return dict(payload)
+
+
+def _report_cache_set(key: str, payload: dict) -> None:
+    with REPORT_CACHE_LOCK:
+        REPORT_RESULT_CACHE[key] = (time.time() + REPORT_CACHE_TTL_SEC, dict(payload))
+
+
+def _insert_report_task(
+    *,
+    task_id: str,
+    status: str,
+    asset_type: str,
+    ts_code: Optional[str],
+    query_name: Optional[str],
+    threshold: float,
+    min_gap: int,
+    lookback_days: int,
+    end_date: Optional[str],
+    output_format: str,
+    template_version: str,
+    mysql_cfg: dict,
+) -> None:
+    _ensure_report_task_tables(mysql_cfg)
+    sql = """
+    INSERT INTO report_gen_task (
+      task_id, status, asset_type, ts_code, query_name, threshold, min_gap, lookback_days, end_date,
+      output_format, template_version
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                sql,
+                (
+                    task_id,
+                    status,
+                    asset_type,
+                    ts_code,
+                    (query_name or "")[:128] or None,
+                    threshold,
+                    min_gap,
+                    lookback_days,
+                    end_date,
+                    output_format,
+                    template_version,
+                ),
+            )
+        conn.commit()
+
+
+def _mark_report_task_running(task_id: str, mysql_cfg: dict) -> None:
+    _ensure_report_task_tables(mysql_cfg)
+    sql = """
+    UPDATE report_gen_task
+    SET status='running', started_at=NOW(3), updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+        conn.commit()
+
+
+def _mark_report_task_done(task_id: str, result: dict, duration_ms: int, mysql_cfg: dict) -> None:
+    _ensure_report_task_tables(mysql_cfg)
+    sql = """
+    UPDATE report_gen_task
+    SET status='done',
+        report_id=%s,
+        cache_hit=%s,
+        duration_ms=%s,
+        error_message=NULL,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                sql,
+                (
+                    result.get("report_id"),
+                    1 if result.get("cache_hit") else 0,
+                    max(0, int(duration_ms)),
+                    task_id,
+                ),
+            )
+        conn.commit()
+
+
+def _mark_report_task_error(task_id: str, error_message: str, duration_ms: int, mysql_cfg: dict) -> None:
+    _ensure_report_task_tables(mysql_cfg)
+    sql = """
+    UPDATE report_gen_task
+    SET status='error',
+        error_message=%s,
+        duration_ms=%s,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, ((error_message or "")[:4096], max(0, int(duration_ms)), task_id))
+        conn.commit()
+
+
+def _fetch_report_task(task_id: str, mysql_cfg: dict) -> Optional[dict]:
+    _ensure_report_task_tables(mysql_cfg)
+    sql = """
+    SELECT task_id, status, asset_type, ts_code, query_name, threshold, min_gap, lookback_days, end_date,
+           output_format, template_version, report_id, cache_hit, error_message, created_at, started_at, finished_at, duration_ms
+    FROM report_gen_task
+    WHERE task_id = %s
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+            row = cursor.fetchone()
+    return _jsonify_row(row) if row else None
 
 
 def _resolve_mysql_cfg(
@@ -203,6 +367,54 @@ def _ensure_uptrend_tables(mysql_cfg: dict) -> None:
 
     with UPTREND_TABLE_LOCK:
         UPTREND_TABLE_READY.add(key)
+
+
+def _ensure_report_task_tables(mysql_cfg: dict) -> None:
+    key = (
+        str(mysql_cfg["host"]),
+        int(mysql_cfg.get("port", DEFAULT_MYSQL_PORT)),
+        str(mysql_cfg["user"]),
+        str(mysql_cfg["database"]),
+    )
+    with REPORT_TABLE_LOCK:
+        if key in REPORT_TABLE_READY:
+            return
+
+    task_sql = """
+    CREATE TABLE IF NOT EXISTS report_gen_task (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      task_id VARCHAR(32) NOT NULL,
+      status VARCHAR(16) NOT NULL,
+      asset_type CHAR(1) NOT NULL DEFAULT 'E',
+      ts_code VARCHAR(16) NULL,
+      query_name VARCHAR(128) NULL,
+      threshold DECIMAL(10,4) NOT NULL,
+      min_gap INT NOT NULL,
+      lookback_days INT NOT NULL,
+      end_date DATE NULL,
+      output_format VARCHAR(8) NOT NULL,
+      template_version VARCHAR(32) NOT NULL,
+      report_id VARCHAR(32) NULL,
+      cache_hit TINYINT(1) NOT NULL DEFAULT 0,
+      error_message TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      started_at DATETIME(3) NULL,
+      finished_at DATETIME(3) NULL,
+      duration_ms INT NULL,
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_task_id (task_id),
+      KEY idx_status_created (status, created_at),
+      KEY idx_asset_created (asset_type, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(task_sql)
+        conn.commit()
+
+    with REPORT_TABLE_LOCK:
+        REPORT_TABLE_READY.add(key)
 
 
 def _ensure_market_breadth_tables(mysql_cfg: dict) -> None:
@@ -1660,12 +1872,16 @@ class GenerateRequest(BaseModel):
     lookback_days: int = Field(365, ge=60)
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD; default latest trade date")
     mysql_host: str = DEFAULT_MYSQL_HOST
+    mysql_port: int = DEFAULT_MYSQL_PORT
     mysql_user: str = DEFAULT_MYSQL_USER
     mysql_database: str = DEFAULT_MYSQL_DB
     mysql_password: Optional[str] = Field(
         None, description="If omitted, uses MYSQL_PASSWORD env var"
     )
     asset_type: str = Field("E", description="E=stock, F=fund")
+    output_format: str = Field("html", description="html|json|both")
+    template_version: str = Field(DEFAULT_TEMPLATE_VERSION, description="report template version")
+    async_mode: bool = Field(True, description="run in async task mode")
 
 
 class GenerateByCodeRequest(BaseModel):
@@ -1675,12 +1891,16 @@ class GenerateByCodeRequest(BaseModel):
     lookback_days: int = Field(365, ge=60)
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD; default latest trade date")
     mysql_host: str = DEFAULT_MYSQL_HOST
+    mysql_port: int = DEFAULT_MYSQL_PORT
     mysql_user: str = DEFAULT_MYSQL_USER
     mysql_database: str = DEFAULT_MYSQL_DB
     mysql_password: Optional[str] = Field(
         None, description="If omitted, uses MYSQL_PASSWORD env var"
     )
     asset_type: str = Field("E", description="E=stock, F=fund")
+    output_format: str = Field("html", description="html|json|both")
+    template_version: str = Field(DEFAULT_TEMPLATE_VERSION, description="report template version")
+    async_mode: bool = Field(True, description="run in async task mode")
 
 
 class UptrendQuery(BaseModel):
@@ -1690,34 +1910,6 @@ class UptrendQuery(BaseModel):
     min_rows: int = Field(60, ge=20, le=2000)
     top_k: int = Field(0, ge=0, le=20000, description="0 means all")
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD; default today")
-
-
-def _build_summary(rows, pivots, stock_name: str, ts_code: str, threshold: float, min_gap: int):
-    if not rows:
-        return {}
-    prices = [float(r.get("close") or 0) for r in rows]
-    latest = rows[-1]
-    cycle_count = max(0, len(pivots) - 1)
-    return {
-        "stock_name": stock_name,
-        "ts_code": ts_code,
-        "date_range": [str(rows[0].get("trade_date")), str(rows[-1].get("trade_date"))],
-        "sample_days": len(rows),
-        "min_close": round(min(prices), 4),
-        "max_close": round(max(prices), 4),
-        "latest_date": str(latest.get("trade_date")),
-        "latest_close": round(float(latest.get("close") or 0), 4),
-        "latest_open": round(float(latest.get("open") or latest.get("close") or 0), 4),
-        "latest_high": round(float(latest.get("high") or latest.get("close") or 0), 4),
-        "latest_low": round(float(latest.get("low") or latest.get("close") or 0), 4),
-        "latest_pct_chg": round(float(latest.get("pct_chg") or 0), 4),
-        "latest_vol": float(latest.get("vol") or 0),
-        "latest_amount": float(latest.get("amount") or 0),
-        "pivot_count": len(pivots),
-        "cycle_count": cycle_count,
-        "threshold": threshold,
-        "min_gap": min_gap,
-    }
 
 
 def _save_report(report_id: str, html: str, metadata: dict) -> Path:
@@ -1735,46 +1927,149 @@ def _load_metadata(report_id: str) -> dict:
     return json.loads(meta_path.read_text(encoding="utf-8"))
 
 
-def _find_stock_name_by_code(ts_code: str, cfg: DbConfig) -> str:
-    sql = (
-        "SELECT name FROM stock_basic "
-        f"WHERE ts_code = '{ts_code}' "
-        "LIMIT 1;"
-    )
-    rows = run_mysql(sql, cfg)
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"stock not found by ts_code: {ts_code}")
-    return rows[0].strip()
-
-
-def _find_asset_name_by_code(ts_code: str, cfg: DbConfig, asset_type: str) -> str:
+def _find_asset_name_by_code(ts_code: str, mysql_cfg: dict, asset_type: str) -> str:
     safe_type = (asset_type or "E").strip().upper()
     if safe_type not in {"E", "F"}:
         raise HTTPException(status_code=400, detail="asset_type must be E or F")
-    sql = (
-        "SELECT name FROM stock_basic "
-        f"WHERE ts_code = '{ts_code}' AND asset_type = '{safe_type}' "
-        "LIMIT 1;"
-    )
-    rows = run_mysql(sql, cfg)
-    if not rows:
+    sql = """
+    SELECT name
+    FROM stock_basic
+    WHERE ts_code = %s
+      AND asset_type = %s
+      AND list_status = 'L'
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (ts_code, safe_type))
+            row = cursor.fetchone() or {}
+    name = str(row.get("name") or "").strip()
+    if not name:
         kind = "stock" if safe_type == "E" else "fund"
         raise HTTPException(status_code=404, detail=f"{kind} not found by ts_code: {ts_code}")
-    return rows[0].strip()
+    return name
 
 
-def _latest_trade_date_by_asset(cfg: DbConfig, asset_type: str) -> str:
+def _latest_trade_date_by_asset(mysql_cfg: dict, asset_type: str) -> str:
     safe_type = (asset_type or "E").strip().upper()
     if safe_type not in {"E", "F"}:
         raise HTTPException(status_code=400, detail="asset_type must be E or F")
-    rows = run_mysql(
-        f"SELECT MAX(trade_date) FROM stock_daily WHERE asset_type = '{safe_type}';",
-        cfg,
-    )
-    if not rows or not rows[0].strip() or rows[0].strip().upper() == "NULL":
+    sql = "SELECT MAX(trade_date) AS max_trade_date FROM stock_daily WHERE asset_type = %s"
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (safe_type,))
+            row = cursor.fetchone() or {}
+    max_trade_date = row.get("max_trade_date")
+    if not max_trade_date:
         kind = "stock" if safe_type == "E" else "fund"
         raise HTTPException(status_code=404, detail=f"no trade_date found for {kind}")
-    return rows[0].strip()
+    return str(max_trade_date)
+
+
+def _resolve_asset_by_name(
+    *,
+    name: str,
+    mysql_cfg: dict,
+    asset_type: str,
+) -> tuple[str, str]:
+    safe_type = (asset_type or "E").strip().upper()
+    if safe_type not in {"E", "F"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    query = (name or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    variants = build_query_variants(query)
+    args: list[Any] = [safe_type]
+    where = ""
+    if variants:
+        clauses = []
+        for token in variants:
+            clauses.append("(name = %s OR symbol = %s OR ts_code = %s)")
+            args.extend([token, token, token.upper()])
+        where = " AND (" + " OR ".join(clauses) + ")"
+
+    exact_sql = f"""
+    SELECT ts_code, symbol, name
+    FROM stock_basic
+    WHERE asset_type = %s
+      AND list_status = 'L'
+      {where}
+    ORDER BY ts_code
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(exact_sql, tuple(args))
+            row = cursor.fetchone()
+            if not row:
+                like_sql = """
+                SELECT ts_code, symbol, name
+                FROM stock_basic
+                WHERE asset_type = %s
+                  AND list_status = 'L'
+                  AND (name LIKE %s OR symbol LIKE %s OR ts_code LIKE %s)
+                ORDER BY ts_code
+                LIMIT 1
+                """
+                like = f"%{query}%"
+                cursor.execute(like_sql, (safe_type, like, like, like.upper()))
+                row = cursor.fetchone()
+
+    if not row:
+        kind = "stock" if safe_type == "E" else "fund"
+        raise HTTPException(status_code=404, detail=f"{kind} not found by name: {query}")
+    return str(row.get("ts_code") or ""), str(row.get("name") or "")
+
+
+def _fetch_daily_by_asset_type(
+    *,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+    asset_type: str,
+    mysql_cfg: dict,
+) -> list[dict]:
+    safe_type = (asset_type or "E").strip().upper()
+    sql = """
+    SELECT trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount
+    FROM stock_daily
+    WHERE ts_code = %s
+      AND asset_type = %s
+      AND trade_date BETWEEN %s AND %s
+    ORDER BY trade_date ASC
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (ts_code, safe_type, start_date, end_date))
+            rows = cursor.fetchall() or []
+
+    out: list[dict] = []
+    for row in rows:
+        close_v = row.get("close")
+        if close_v is None:
+            continue
+        close_f = float(close_v)
+        open_f = float(row.get("open")) if row.get("open") is not None else close_f
+        high_f = float(row.get("high")) if row.get("high") is not None else max(open_f, close_f)
+        low_f = float(row.get("low")) if row.get("low") is not None else min(open_f, close_f)
+        pre_close = row.get("pre_close")
+        pre_close_f = float(pre_close) if pre_close is not None else close_f
+        out.append(
+            {
+                "trade_date": str(row.get("trade_date") or ""),
+                "open": open_f,
+                "high": high_f,
+                "low": low_f,
+                "close": close_f,
+                "pre_close": pre_close_f,
+                "change": float(row.get("change")) if row.get("change") is not None else None,
+                "pct_chg": float(row.get("pct_chg")) if row.get("pct_chg") is not None else None,
+                "vol": float(row.get("vol")) if row.get("vol") is not None else None,
+                "amount": float(row.get("amount")) if row.get("amount") is not None else None,
+            }
+        )
+    return out
 
 
 def _generate_report_impl(
@@ -1785,33 +2080,224 @@ def _generate_report_impl(
     min_gap: int,
     lookback_days: int,
     end_date: Optional[str],
-    cfg: DbConfig,
+    mysql_cfg: dict,
     created_from: dict,
     asset_type: str = "E",
+    output_format: str = "html",
+    template_version: str = DEFAULT_TEMPLATE_VERSION,
 ):
     safe_type = (asset_type or "E").strip().upper()
-    end_trade_date = end_date or _latest_trade_date_by_asset(cfg, safe_type)
+    fmt = (output_format or "html").strip().lower()
+    if fmt not in {"html", "json", "both"}:
+        raise HTTPException(status_code=400, detail="output_format must be html/json/both")
+    end_trade_date = end_date or _latest_trade_date_by_asset(mysql_cfg, safe_type)
     start_date = (date.fromisoformat(end_trade_date) - timedelta(days=lookback_days)).isoformat()
-    rows = fetch_daily_by_asset_type(ts_code, start_date, end_trade_date, cfg, safe_type)
+    rows = _fetch_daily_by_asset_type(
+        ts_code=ts_code,
+        start_date=start_date,
+        end_date=end_trade_date,
+        asset_type=safe_type,
+        mysql_cfg=mysql_cfg,
+    )
     if len(rows) < 20:
         raise HTTPException(status_code=422, detail="not enough data in requested range")
     pivots = zigzag_pivots(rows, threshold, min_gap)
-    if safe_type == "F":
-        html = make_html_asset(stock_name, ts_code, rows, pivots, threshold, min_gap, "基金")
-    else:
-        html = make_html(stock_name, ts_code, rows, pivots, threshold, min_gap)
+    asset_label = "基金" if safe_type == "F" else "A股"
+    report_data = build_cycle_payload(
+        stock_name=stock_name,
+        ts_code=ts_code,
+        rows=rows,
+        pivots=pivots,
+        threshold=threshold,
+        min_gap=min_gap,
+        asset_type=safe_type,
+        asset_label=asset_label,
+    )
+    summary = report_data.get("summary") or {}
 
     report_id = uuid.uuid4().hex[:12]
-    summary = _build_summary(rows, pivots, stock_name, ts_code, threshold, min_gap)
     metadata = {
         "report_id": report_id,
         "summary": summary,
-        "html_url": f"/api/reports/{report_id}/html",
+        "json_url": f"/api/reports/{report_id}/data",
         "created_from": created_from,
         "asset_type": safe_type,
+        "template_version": template_version,
+        "format": fmt,
     }
-    _save_report(report_id, html, metadata)
+    if fmt in {"html", "both"}:
+        html = render_cycle_report_html(
+            report_data=report_data,
+            template_version=template_version,
+        )
+        metadata["html_url"] = f"/api/reports/{report_id}/html"
+        _save_report(report_id, html, metadata)
+    else:
+        meta_path = SERVICE_REPORT_DIR / f"{report_id}.json"
+        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    data_path = SERVICE_REPORT_DIR / f"{report_id}.data.json"
+    data_path.write_text(json.dumps(report_data, ensure_ascii=False), encoding="utf-8")
     return metadata
+
+
+def _generate_report_cached(
+    *,
+    ts_code: str,
+    stock_name: str,
+    threshold: float,
+    min_gap: int,
+    lookback_days: int,
+    end_date: Optional[str],
+    mysql_cfg: dict,
+    created_from: dict,
+    asset_type: str,
+    output_format: str,
+    template_version: str,
+) -> dict:
+    cache_key = _report_cache_key(
+        mysql_cfg=mysql_cfg,
+        asset_type=asset_type,
+        ts_code=ts_code,
+        threshold=threshold,
+        min_gap=min_gap,
+        lookback_days=lookback_days,
+        end_date=end_date,
+        output_format=output_format,
+        template_version=template_version,
+    )
+    cached = _report_cache_get(cache_key)
+    if cached:
+        payload = dict(cached)
+        payload["cache_hit"] = True
+        return payload
+
+    payload = _generate_report_impl(
+        ts_code=ts_code,
+        stock_name=stock_name,
+        threshold=threshold,
+        min_gap=min_gap,
+        lookback_days=lookback_days,
+        end_date=end_date,
+        mysql_cfg=mysql_cfg,
+        created_from=created_from,
+        asset_type=asset_type,
+        output_format=output_format,
+        template_version=template_version,
+    )
+    payload["cache_hit"] = False
+    _report_cache_set(cache_key, payload)
+    return payload
+
+
+def _run_report_task(
+    task_id: str,
+    *,
+    ts_code: Optional[str],
+    query_name: Optional[str],
+    threshold: float,
+    min_gap: int,
+    lookback_days: int,
+    end_date: Optional[str],
+    mysql_cfg: dict,
+    asset_type: str,
+    output_format: str,
+    template_version: str,
+) -> None:
+    started = time.time()
+    _mark_report_task_running(task_id, mysql_cfg)
+    try:
+        if ts_code:
+            resolved_ts = ts_code.strip().upper()
+            stock_name = _find_asset_name_by_code(resolved_ts, mysql_cfg, asset_type)
+        else:
+            resolved_ts, stock_name = _resolve_asset_by_name(
+                name=query_name or "",
+                mysql_cfg=mysql_cfg,
+                asset_type=asset_type,
+            )
+        result = _generate_report_cached(
+            ts_code=resolved_ts,
+            stock_name=stock_name,
+            threshold=threshold,
+            min_gap=min_gap,
+            lookback_days=lookback_days,
+            end_date=end_date,
+            mysql_cfg=mysql_cfg,
+            created_from={
+                "ts_code": resolved_ts,
+                "name": stock_name,
+                "threshold": threshold,
+                "min_gap": min_gap,
+                "lookback_days": lookback_days,
+                "end_date": end_date,
+                "asset_type": asset_type,
+                "output_format": output_format,
+                "template_version": template_version,
+                "async_mode": True,
+            },
+            asset_type=asset_type,
+            output_format=output_format,
+            template_version=template_version,
+        )
+        _mark_report_task_done(
+            task_id=task_id,
+            result=result,
+            duration_ms=int((time.time() - started) * 1000),
+            mysql_cfg=mysql_cfg,
+        )
+    except Exception as exc:
+        _mark_report_task_error(
+            task_id=task_id,
+            error_message=str(exc),
+            duration_ms=int((time.time() - started) * 1000),
+            mysql_cfg=mysql_cfg,
+        )
+
+
+def _submit_report_task(
+    *,
+    ts_code: Optional[str],
+    query_name: Optional[str],
+    threshold: float,
+    min_gap: int,
+    lookback_days: int,
+    end_date: Optional[str],
+    mysql_cfg: dict,
+    asset_type: str,
+    output_format: str,
+    template_version: str,
+) -> str:
+    task_id = uuid.uuid4().hex[:16]
+    _insert_report_task(
+        task_id=task_id,
+        status="queued",
+        asset_type=asset_type,
+        ts_code=ts_code,
+        query_name=query_name,
+        threshold=threshold,
+        min_gap=min_gap,
+        lookback_days=lookback_days,
+        end_date=end_date,
+        output_format=output_format,
+        template_version=template_version,
+        mysql_cfg=mysql_cfg,
+    )
+    REPORT_TASK_EXECUTOR.submit(
+        _run_report_task,
+        task_id,
+        ts_code=ts_code,
+        query_name=query_name,
+        threshold=threshold,
+        min_gap=min_gap,
+        lookback_days=lookback_days,
+        end_date=end_date,
+        mysql_cfg=mysql_cfg,
+        asset_type=asset_type,
+        output_format=output_format,
+        template_version=template_version,
+    )
+    return task_id
 
 
 @app.get("/api/health")
@@ -1860,39 +2346,57 @@ def get_asset_suggestions(
 
 @app.post("/api/reports")
 def generate_report(req: GenerateRequest):
-    password = _normalize_password(req.mysql_password) or _normalize_password(DEFAULT_MYSQL_PASSWORD)
-    if not password:
-        raise HTTPException(
-            status_code=400,
-            detail="mysql password missing; pass mysql_password or set MYSQL_PASSWORD env",
-        )
-
-    cfg = DbConfig(
-        host=req.mysql_host,
-        user=req.mysql_user,
-        password=password,
-        database=req.mysql_database,
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=req.mysql_host,
+        mysql_port=req.mysql_port,
+        mysql_user=req.mysql_user,
+        mysql_database=req.mysql_database,
+        mysql_password=req.mysql_password,
     )
     safe_type = (req.asset_type or "E").strip().upper()
     if safe_type not in {"E", "F"}:
         raise HTTPException(status_code=400, detail="asset_type must be E or F")
     try:
-        if safe_type == "F":
-            ts_code, real_name = resolve_fund(req.name, cfg)
-        else:
-            ts_code, real_name = resolve_stock(req.name, cfg)
-        return _generate_report_impl(
+        if req.async_mode:
+            task_id = _submit_report_task(
+                ts_code=None,
+                query_name=req.name,
+                threshold=req.threshold,
+                min_gap=req.min_gap,
+                lookback_days=req.lookback_days,
+                end_date=req.end_date,
+                mysql_cfg=mysql_cfg,
+                asset_type=safe_type,
+                output_format=req.output_format,
+                template_version=req.template_version,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "task_id": task_id,
+                    "status": "queued",
+                    "poll_url": f"/api/report-tasks/{task_id}",
+                },
+            )
+        ts_code, real_name = _resolve_asset_by_name(
+            name=req.name,
+            mysql_cfg=mysql_cfg,
+            asset_type=safe_type,
+        )
+        return _generate_report_cached(
             ts_code=ts_code,
             stock_name=real_name,
             threshold=req.threshold,
             min_gap=req.min_gap,
             lookback_days=req.lookback_days,
             end_date=req.end_date,
-            cfg=cfg,
+            mysql_cfg=mysql_cfg,
             created_from=req.model_dump(
                 exclude={"mysql_host", "mysql_user", "mysql_database", "mysql_password"}
             ),
             asset_type=safe_type,
+            output_format=req.output_format,
+            template_version=req.template_version,
         )
     except HTTPException:
         raise
@@ -1902,37 +2406,54 @@ def generate_report(req: GenerateRequest):
 
 @app.post("/api/reports/by-code")
 def generate_report_by_code(req: GenerateByCodeRequest):
-    password = _normalize_password(req.mysql_password) or _normalize_password(DEFAULT_MYSQL_PASSWORD)
-    if not password:
-        raise HTTPException(
-            status_code=400,
-            detail="mysql password missing; pass mysql_password or set MYSQL_PASSWORD env",
-        )
-
-    cfg = DbConfig(
-        host=req.mysql_host,
-        user=req.mysql_user,
-        password=password,
-        database=req.mysql_database,
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=req.mysql_host,
+        mysql_port=req.mysql_port,
+        mysql_user=req.mysql_user,
+        mysql_database=req.mysql_database,
+        mysql_password=req.mysql_password,
     )
     safe_type = (req.asset_type or "E").strip().upper()
     if safe_type not in {"E", "F"}:
         raise HTTPException(status_code=400, detail="asset_type must be E or F")
     ts_code = req.ts_code.strip().upper()
     try:
-        stock_name = _find_asset_name_by_code(ts_code, cfg, safe_type)
-        return _generate_report_impl(
+        if req.async_mode:
+            task_id = _submit_report_task(
+                ts_code=ts_code,
+                query_name=None,
+                threshold=req.threshold,
+                min_gap=req.min_gap,
+                lookback_days=req.lookback_days,
+                end_date=req.end_date,
+                mysql_cfg=mysql_cfg,
+                asset_type=safe_type,
+                output_format=req.output_format,
+                template_version=req.template_version,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "task_id": task_id,
+                    "status": "queued",
+                    "poll_url": f"/api/report-tasks/{task_id}",
+                },
+            )
+        stock_name = _find_asset_name_by_code(ts_code, mysql_cfg, safe_type)
+        return _generate_report_cached(
             ts_code=ts_code,
             stock_name=stock_name,
             threshold=req.threshold,
             min_gap=req.min_gap,
             lookback_days=req.lookback_days,
             end_date=req.end_date,
-            cfg=cfg,
+            mysql_cfg=mysql_cfg,
             created_from=req.model_dump(
                 exclude={"mysql_host", "mysql_user", "mysql_database", "mysql_password"}
             ),
             asset_type=safe_type,
+            output_format=req.output_format,
+            template_version=req.template_version,
         )
     except HTTPException:
         raise
@@ -2467,9 +2988,79 @@ def get_report(report_id: str):
     return _load_metadata(report_id)
 
 
+@app.get("/api/report-tasks/{task_id}")
+def get_report_task(
+    task_id: str,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    row = _fetch_report_task(task_id, mysql_cfg)
+    if not row:
+        raise HTTPException(status_code=404, detail="task not found")
+    status = str(row.get("status") or "")
+    base = {
+        "task_id": row.get("task_id"),
+        "status": status,
+        "asset_type": row.get("asset_type") or "E",
+        "ts_code": row.get("ts_code"),
+        "query_name": row.get("query_name"),
+        "params": {
+            "threshold": row.get("threshold"),
+            "min_gap": row.get("min_gap"),
+            "lookback_days": row.get("lookback_days"),
+            "end_date": row.get("end_date"),
+            "output_format": row.get("output_format"),
+            "template_version": row.get("template_version"),
+        },
+        "created_at": row.get("created_at"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "duration_ms": row.get("duration_ms"),
+        "poll_url": f"/api/report-tasks/{task_id}",
+    }
+    if status in {"queued", "running"}:
+        return base
+    if status == "error":
+        return JSONResponse(
+            status_code=500,
+            content={**base, "error": row.get("error_message") or "task failed"},
+        )
+    report_id = row.get("report_id")
+    if not report_id:
+        raise HTTPException(status_code=500, detail="report_id missing for done task")
+    meta = _load_metadata(str(report_id))
+    return {
+        **base,
+        **meta,
+        "report_id": report_id,
+        "cache_hit": bool(row.get("cache_hit")),
+    }
+
+
 @app.get("/api/reports/{report_id}/html")
 def get_report_html(report_id: str):
     html_path = SERVICE_REPORT_DIR / f"{report_id}.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="report html not found")
     return FileResponse(str(html_path), media_type="text/html; charset=utf-8")
+
+
+@app.get("/api/reports/{report_id}/data")
+def get_report_data(report_id: str):
+    data_path = SERVICE_REPORT_DIR / f"{report_id}.data.json"
+    if not data_path.exists():
+        raise HTTPException(status_code=404, detail="report data not found")
+    try:
+        return JSONResponse(content=json.loads(data_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to load report data: {exc}") from exc

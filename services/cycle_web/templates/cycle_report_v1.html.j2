@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    h1 { margin: 0 0 10px 0; font-size: 20px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .summary {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .kpi {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      background: #fff;
+    }
+    .kpi .k { font-size: 11px; color: #64748b; }
+    .kpi .v { font-size: 14px; font-weight: 700; margin-top: 3px; }
+    .card {
+      margin-top: 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .chart-wrap { padding: 10px; }
+    .chart {
+      width: 100%;
+      height: 420px;
+      display: block;
+    }
+    .table-wrap {
+      max-height: 380px;
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 720px;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #f1f5f9;
+      white-space: nowrap;
+    }
+    th {
+      background: #f8fafc;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .rise { color: #b91c1c; }
+    .fall { color: #047857; }
+    @media (max-width: 900px) {
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chart { height: 320px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="muted">模板版本：{{ template_version }} | threshold={{ summary.threshold }} | min_gap={{ summary.min_gap }}</div>
+
+  <div class="summary">
+    <div class="kpi"><div class="k">区间</div><div class="v">{{ summary.date_range[0] }} ~ {{ summary.date_range[1] }}</div></div>
+    <div class="kpi"><div class="k">样本交易日</div><div class="v">{{ summary.sample_days }}</div></div>
+    <div class="kpi"><div class="k">周期数</div><div class="v">{{ summary.cycle_count }}</div></div>
+    <div class="kpi"><div class="k">极值点</div><div class="v">{{ summary.pivot_count }}</div></div>
+    <div class="kpi"><div class="k">收盘区间</div><div class="v">{{ summary.min_close }} ~ {{ summary.max_close }}</div></div>
+    <div class="kpi"><div class="k">最新收盘</div><div class="v">{{ summary.latest_date }} / {{ summary.latest_close }}</div></div>
+    <div class="kpi"><div class="k">最新涨跌幅</div><div class="v {% if summary.latest_pct_chg >= 0 %}rise{% else %}fall{% endif %}">{{ summary.latest_pct_chg }}%</div></div>
+    <div class="kpi"><div class="k">成交额</div><div class="v">{{ summary.latest_amount }}</div></div>
+  </div>
+
+  <div class="card">
+    <div class="chart-wrap">
+      <canvas id="kline" class="chart"></canvas>
+    </div>
+  </div>
+
+  <div class="card table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>起点</th>
+          <th>终点</th>
+          <th>交易日</th>
+          <th>涨跌幅</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cycles %}
+        <tr>
+          <td>{{ c.index }}</td>
+          <td>{{ c.start_date }} {{ c.start_type }} {{ c.start_price }}</td>
+          <td>{{ c.end_date }} {{ c.end_type }} {{ c.end_price }}</td>
+          <td>{{ c.trade_days }}</td>
+          <td class="{% if c.chg_pct is not none and c.chg_pct >= 0 %}rise{% else %}fall{% endif %}">
+            {% if c.chg_pct is not none %}{{ c.chg_pct }}%{% else %}n/a{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const reportData = {{ report_data_json | safe }};
+    const canvas = document.getElementById("kline");
+    const ctx = canvas.getContext("2d");
+
+    function fitCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(320, canvas.clientWidth);
+      const h = Math.max(240, canvas.clientHeight);
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { w, h };
+    }
+
+    function draw() {
+      const { w, h } = fitCanvas();
+      ctx.clearRect(0, 0, w, h);
+      const candles = reportData.candles || [];
+      if (!candles.length) return;
+      const pad = { l: 56, r: 12, t: 16, b: 28 };
+      const cw = w - pad.l - pad.r;
+      const ch = h - pad.t - pad.b;
+      const highs = candles.map(x => Number(x.high || 0));
+      const lows = candles.map(x => Number(x.low || 0));
+      const maxP = Math.max(...highs);
+      const minP = Math.min(...lows);
+      const span = Math.max(0.01, maxP - minP);
+      const xOf = (i) => pad.l + (i / Math.max(1, candles.length - 1)) * cw;
+      const yOf = (p) => pad.t + ((maxP - p) / span) * ch;
+
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.beginPath();
+      ctx.moveTo(pad.l, pad.t);
+      ctx.lineTo(pad.l, pad.t + ch);
+      ctx.lineTo(pad.l + cw, pad.t + ch);
+      ctx.stroke();
+
+      const barW = Math.max(1, Math.min(10, cw / Math.max(10, candles.length) * 0.55));
+      candles.forEach((x, i) => {
+        const open = Number(x.open || 0);
+        const high = Number(x.high || 0);
+        const low = Number(x.low || 0);
+        const close = Number(x.close || 0);
+        const px = xOf(i);
+        const yH = yOf(high);
+        const yL = yOf(low);
+        const yO = yOf(open);
+        const yC = yOf(close);
+        const color = close >= open ? "#dc2626" : "#059669";
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px, yH);
+        ctx.lineTo(px, yL);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.fillRect(px - barW / 2, Math.min(yO, yC), barW, Math.max(1, Math.abs(yO - yC)));
+      });
+
+      const pivots = reportData.pivots || [];
+      if (pivots.length > 1) {
+        ctx.strokeStyle = "#f59e0b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        pivots.forEach((p, idx) => {
+          const px = xOf(Number(p.idx || 0));
+          const py = yOf(Number(p.price || 0));
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+    }
+
+    window.addEventListener("resize", () => {
+      clearTimeout(window.__kResizeTimer);
+      window.__kResizeTimer = setTimeout(draw, 120);
+    });
+    draw();
+  </script>
+</body>
+</html>
+
