@@ -45,6 +45,28 @@
       margin: 0 0 10px 0;
       font-size: 22px;
     }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #334155;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
     .grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -88,6 +110,10 @@
     .muted { color: #64748b; font-size: 12px; }
     .error { color: #b91c1c; font-size: 13px; }
     .ok { color: #065f46; font-size: 13px; }
+    .split-line {
+      margin: 12px 0;
+      border-top: 1px dashed #d1d5db;
+    }
     .summary {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -145,6 +171,86 @@
       font-size: 12px;
       margin-top: 10px;
     }
+    .table-wrap {
+      margin-top: 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: auto;
+      max-height: 420px;
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 650px;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 8px;
+      border-bottom: 1px solid #f1f5f9;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8fafc;
+      color: #475569;
+      z-index: 1;
+    }
+    tbody tr {
+      cursor: pointer;
+    }
+    tbody tr:hover {
+      background: #f8fafc;
+    }
+    tbody tr.selected {
+      background: #e0e7ff;
+    }
+    .rise { color: #b91c1c; }
+    .fall { color: #047857; }
+    .uptrend-meta {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 12px;
+    }
+    .section-title {
+      margin-top: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+    }
+    .history-row {
+      cursor: pointer;
+    }
+    .history-row.selected {
+      background: #e0e7ff;
+    }
+    .tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 18px;
+      border: 1px solid #cbd5e1;
+      color: #334155;
+      background: #f8fafc;
+    }
+    .tag.done {
+      color: #065f46;
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    .tag.error {
+      color: #b91c1c;
+      border-color: #fecaca;
+      background: #fef2f2;
+    }
+    .tag.running {
+      color: #92400e;
+      border-color: #fcd34d;
+      background: #fffbeb;
+    }
     @media (max-width: 1180px) {
       .layout {
         grid-template-columns: 1fr;
@@ -180,38 +286,134 @@
       <div class="left-col">
         <div class="card">
           <h1>A股周期分析服务</h1>
-          <div class="grid">
-            <div>
-              <label>公司名</label>
-              <input id="name" value="中际旭创" />
-            </div>
-            <div>
-              <label>threshold</label>
-              <input id="threshold" type="number" step="0.01" value="0.08" />
-            </div>
-            <div>
-              <label>min-gap</label>
-              <input id="minGap" type="number" step="1" value="5" />
-            </div>
-            <div>
-              <label>lookback-days</label>
-              <input id="lookback" type="number" step="1" value="365" />
-            </div>
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="single">A股周期分析服务</button>
+            <button class="tab-btn" data-tab="uptrend">上行周期股票筛选</button>
           </div>
-          <div class="actions">
-            <button id="runBtn">生成HTML报告</button>
-            <button id="openBtn" class="secondary" disabled>新窗口打开报告</button>
-            <span id="status" class="muted">等待执行</span>
+
+          <div id="panelSingle" class="tab-panel active">
+            <div class="grid">
+              <div>
+                <label>公司名</label>
+                <input id="name" value="中际旭创" />
+              </div>
+              <div>
+                <label>threshold</label>
+                <input id="threshold" type="number" step="0.01" value="0.08" />
+              </div>
+              <div>
+                <label>min-gap</label>
+                <input id="minGap" type="number" step="1" value="5" />
+              </div>
+              <div>
+                <label>lookback-days</label>
+                <input id="lookback" type="number" step="1" value="365" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="runBtn">生成HTML报告</button>
+              <span id="singleStatus" class="muted">等待执行</span>
+            </div>
+            <div class="hint">输入公司名直接生成周期报告。</div>
           </div>
+
+          <div id="panelUptrend" class="tab-panel">
+            <div class="grid">
+              <div>
+                <label>threshold</label>
+                <input id="upThreshold" type="number" step="0.01" value="0.08" />
+              </div>
+              <div>
+                <label>min-gap</label>
+                <input id="upMinGap" type="number" step="1" value="5" />
+              </div>
+              <div>
+                <label>lookback-days</label>
+                <input id="upLookback" type="number" step="1" value="365" />
+              </div>
+              <div>
+                <label>min-rows</label>
+                <input id="upMinRows" type="number" step="1" value="60" />
+              </div>
+              <div>
+                <label>top-k (0=全部)</label>
+                <input id="upTopK" type="number" step="1" value="150" />
+              </div>
+              <div>
+                <label>end-date (可选)</label>
+                <input id="upEndDate" type="date" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="scanBtn">筛选上行股票</button>
+              <button id="clearBtn" class="secondary" type="button">清空列表</button>
+              <span id="upStatus" class="muted">等待筛选</span>
+            </div>
+            <div id="upError" class="error"></div>
+            <div id="upMeta" class="uptrend-meta"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>股票</th>
+                    <th>代码</th>
+                    <th>最新收盘</th>
+                    <th>最近交易日</th>
+                    <th>最近周期涨幅</th>
+                    <th>距最后极值天数</th>
+                  </tr>
+                </thead>
+                <tbody id="uptrendBody">
+                  <tr><td colspan="6" class="muted">点击“筛选上行股票”加载列表</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="section-title">历史任务</div>
+            <div class="actions">
+              <div>
+                <label>状态过滤</label>
+                <select id="historyStatus">
+                  <option value="">全部</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="done">done</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <button id="refreshHistoryBtn" class="secondary" type="button">刷新历史任务</button>
+              <span id="historyStatusText" class="muted">等待加载</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务ID</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>耗时(ms)</th>
+                    <th>返回数</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody id="historyBody">
+                  <tr><td colspan="6" class="muted">点击“刷新历史任务”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="hint">点击任意股票后，在右侧复用同一份报告预览。</div>
+          </div>
+
+          <div class="split-line"></div>
           <div id="error" class="error"></div>
           <div id="summary" class="summary"></div>
-          <div class="hint">PC建议：左侧参数固定，右侧看报告；数据库连接由后端环境变量管理。</div>
+          <div class="hint">数据库连接由后端环境变量管理。</div>
         </div>
       </div>
       <div class="card right-card">
         <div class="preview-toolbar">
           <div class="preview-title">报告预览</div>
           <div class="actions" style="margin-top:0">
+            <button id="openBtn" class="secondary" disabled>新窗口打开报告</button>
             <button id="fsBtn" class="secondary" type="button">全屏预览</button>
           </div>
         </div>
@@ -223,22 +425,56 @@
   </div>
 
   <script>
+    const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+    const panelSingle = document.getElementById("panelSingle");
+    const panelUptrend = document.getElementById("panelUptrend");
     const runBtn = document.getElementById("runBtn");
+    const singleStatusEl = document.getElementById("singleStatus");
+    const scanBtn = document.getElementById("scanBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const upStatusEl = document.getElementById("upStatus");
+    const upErrorEl = document.getElementById("upError");
+    const upMetaEl = document.getElementById("upMeta");
+    const uptrendBody = document.getElementById("uptrendBody");
+    const historyStatusSelect = document.getElementById("historyStatus");
+    const refreshHistoryBtn = document.getElementById("refreshHistoryBtn");
+    const historyStatusText = document.getElementById("historyStatusText");
+    const historyBody = document.getElementById("historyBody");
     const openBtn = document.getElementById("openBtn");
     const fsBtn = document.getElementById("fsBtn");
-    const statusEl = document.getElementById("status");
     const errEl = document.getElementById("error");
     const summaryEl = document.getElementById("summary");
     const viewer = document.getElementById("viewer");
     const iframeWrap = document.getElementById("iframeWrap");
+    let uptrendItems = [];
+    let historyItems = [];
     let currentHtmlUrl = "";
 
-    function setStatus(text, cls) {
-      statusEl.className = cls || "muted";
-      statusEl.textContent = text;
+    function setSingleStatus(text, cls) {
+      singleStatusEl.className = cls || "muted";
+      singleStatusEl.textContent = text;
+    }
+
+    function setUpStatus(text, cls) {
+      upStatusEl.className = cls || "muted";
+      upStatusEl.textContent = text;
+    }
+
+    function setHistoryStatus(text, cls) {
+      historyStatusText.className = cls || "muted";
+      historyStatusText.textContent = text;
     }
 
     function getVal(id) { return document.getElementById(id).value; }
+    function toNum(id) { return Number(getVal(id)); }
+
+    function switchTab(tab) {
+      tabButtons.forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === tab);
+      });
+      panelSingle.classList.toggle("active", tab === "single");
+      panelUptrend.classList.toggle("active", tab === "uptrend");
+    }
 
     function adjustIframeHeight() {
       if (!currentHtmlUrl) return;
@@ -260,6 +496,37 @@
       }
     }
 
+    function escHtml(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function fmtPct(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "n/a";
+      const n = Number(v);
+      const sign = n > 0 ? "+" : "";
+      return `${sign}${n.toFixed(2)}%`;
+    }
+
+    function fmtDateTime(v) {
+      if (!v) return "-";
+      const s = String(v).replace("T", " ");
+      return s.length > 19 ? s.slice(0, 19) : s;
+    }
+
+    function fmtParams(p) {
+      if (!p) return "-";
+      return `th=${p.threshold}, gap=${p.min_gap}, lb=${p.lookback_days}, k=${p.top_k}`;
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
     function renderSummary(summary) {
       if (!summary) { summaryEl.innerHTML = ""; return; }
       const items = [
@@ -277,16 +544,16 @@
       ).join("");
     }
 
-    runBtn.addEventListener("click", async () => {
+    async function runReportByName() {
       errEl.textContent = "";
-      setStatus("生成中...", "muted");
+      setSingleStatus("生成中...", "muted");
       openBtn.disabled = true;
       try {
         const body = {
           name: getVal("name").trim(),
-          threshold: Number(getVal("threshold")),
-          min_gap: Number(getVal("minGap")),
-          lookback_days: Number(getVal("lookback")),
+          threshold: toNum("threshold"),
+          min_gap: toNum("minGap"),
+          lookback_days: toNum("lookback"),
         };
         const resp = await fetch("/api/reports", {
           method: "POST",
@@ -300,11 +567,238 @@
         viewer.src = currentHtmlUrl;
         openBtn.disabled = false;
         renderSummary(data.summary);
-        setStatus("生成成功", "ok");
+        setSingleStatus("生成成功", "ok");
       } catch (e) {
-        setStatus("生成失败", "error");
+        setSingleStatus("生成失败", "error");
         errEl.textContent = String(e.message || e);
       }
+    }
+
+    async function runReportByCode(tsCode, options) {
+      errEl.textContent = "";
+      openBtn.disabled = true;
+      setUpStatus(`生成 ${tsCode} 报告中...`, "muted");
+      try {
+        const body = {
+          ts_code: tsCode,
+          threshold: options.threshold,
+          min_gap: options.min_gap,
+          lookback_days: options.lookback_days,
+          end_date: options.end_date || null,
+        };
+        const resp = await fetch("/api/reports/by-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        currentHtmlUrl = data.html_url;
+        viewer.style.height = "72vh";
+        viewer.src = currentHtmlUrl;
+        openBtn.disabled = false;
+        renderSummary(data.summary);
+        setUpStatus(`报告已生成: ${data.summary.stock_name}`, "ok");
+      } catch (e) {
+        setUpStatus("报告生成失败", "error");
+        errEl.textContent = String(e.message || e);
+      }
+    }
+
+    function getUptrendParams() {
+      return {
+        threshold: toNum("upThreshold"),
+        min_gap: toNum("upMinGap"),
+        lookback_days: toNum("upLookback"),
+        min_rows: toNum("upMinRows"),
+        top_k: toNum("upTopK"),
+        end_date: getVal("upEndDate").trim(),
+      };
+    }
+
+    function renderUptrendRows(items) {
+      if (!items.length) {
+        uptrendBody.innerHTML = '<tr><td colspan="6" class="muted">未筛选到符合条件的股票</td></tr>';
+        return;
+      }
+      uptrendBody.innerHTML = items.map((item, idx) => {
+        const pct = fmtPct(item.latest_cycle_chg_pct);
+        const pctClass = Number(item.latest_cycle_chg_pct) >= 0 ? "rise" : "fall";
+        return `
+          <tr data-code="${escHtml(item.ts_code)}" data-idx="${idx}">
+            <td>${escHtml(item.name)}</td>
+            <td>${escHtml(item.ts_code)}</td>
+            <td>${Number(item.last_close || 0).toFixed(2)}</td>
+            <td>${escHtml(item.last_trade_date)}</td>
+            <td class="${pctClass}">${pct}</td>
+            <td>${Number(item.since_last_pivot_days || 0)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function fetchUptrendStocks() {
+      upErrorEl.textContent = "";
+      setUpStatus("筛选中...", "muted");
+      try {
+        const p = getUptrendParams();
+        const query = new URLSearchParams({
+          threshold: String(p.threshold),
+          min_gap: String(p.min_gap),
+          lookback_days: String(p.lookback_days),
+          min_rows: String(p.min_rows),
+          top_k: String(p.top_k),
+        });
+        if (p.end_date) query.set("end_date", p.end_date);
+        const resp = await fetch(`/api/uptrend-stocks?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        if (resp.status === 202 && data.task_id) {
+          setUpStatus("任务已提交，后台计算中...", "muted");
+          const deadline = Date.now() + 5 * 60 * 1000;
+          let taskData = null;
+          const pollUrl = data.poll_url || `/api/uptrend-stocks/tasks/${data.task_id}`;
+          while (Date.now() < deadline) {
+            await sleep(1500);
+            const taskResp = await fetch(pollUrl);
+            const taskJson = await taskResp.json();
+            if (taskResp.status === 500) {
+              throw new Error(taskJson.error || "async task failed");
+            }
+            if (!taskResp.ok) {
+              throw new Error(taskJson.detail || "task poll failed");
+            }
+            if (taskJson.status === "done") {
+              taskData = taskJson;
+              break;
+            }
+            if (taskJson.status === "error") {
+              throw new Error(taskJson.error || "async task failed");
+            }
+            setUpStatus(`后台计算中... 任务 ${data.task_id}`, "muted");
+          }
+          if (!taskData) throw new Error("任务超时，请稍后重试");
+          uptrendItems = taskData.items || [];
+          renderUptrendRows(uptrendItems);
+          upMetaEl.textContent = `共筛选 ${taskData.count} 只，当前返回 ${taskData.returned} 只（按上行周期强度降序）`;
+          setUpStatus("筛选完成", "ok");
+          loadTaskHistory();
+          return;
+        }
+        uptrendItems = data.items || [];
+        renderUptrendRows(uptrendItems);
+        upMetaEl.textContent = `共筛选 ${data.count} 只，当前返回 ${data.returned} 只（按上行周期强度降序）`;
+        setUpStatus("筛选完成", "ok");
+        loadTaskHistory();
+      } catch (e) {
+        uptrendItems = [];
+        renderUptrendRows(uptrendItems);
+        setUpStatus("筛选失败", "error");
+        upErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    function renderHistoryRows(items) {
+      if (!items.length) {
+        historyBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
+        return;
+      }
+      historyBody.innerHTML = items.map((item) => {
+        const cls = `tag ${escHtml(item.status || "")}`;
+        return `
+          <tr class="history-row" data-task-id="${escHtml(item.task_id)}">
+            <td>${escHtml(item.task_id)}</td>
+            <td><span class="${cls}">${escHtml(item.status || "-")}</span></td>
+            <td>${escHtml(fmtDateTime(item.created_at))}</td>
+            <td>${item.duration_ms == null ? "-" : Number(item.duration_ms)}</td>
+            <td>${item.returned == null ? "-" : Number(item.returned)}</td>
+            <td>${escHtml(fmtParams(item.params))}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function loadTaskHistory() {
+      setHistoryStatus("加载中...", "muted");
+      try {
+        const query = new URLSearchParams({
+          page: "1",
+          page_size: "20",
+        });
+        const s = historyStatusSelect.value.trim();
+        if (s) query.set("status", s);
+        const resp = await fetch(`/api/uptrend-stocks/task-history?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "history request failed");
+        historyItems = data.items || [];
+        renderHistoryRows(historyItems);
+        setHistoryStatus(`已加载 ${historyItems.length} / 总计 ${data.total || 0}`, "ok");
+      } catch (e) {
+        historyItems = [];
+        renderHistoryRows(historyItems);
+        setHistoryStatus("加载失败", "error");
+        upErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadTaskItems(taskId) {
+      setUpStatus(`加载任务 ${taskId} 结果中...`, "muted");
+      try {
+        const resp = await fetch(`/api/uptrend-stocks/tasks/${encodeURIComponent(taskId)}/items?page=1&page_size=500`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.error || "load task items failed");
+        uptrendItems = data.items || [];
+        renderUptrendRows(uptrendItems);
+        upMetaEl.textContent = `任务 ${taskId} | 返回 ${uptrendItems.length} 条`;
+        setUpStatus("历史任务结果已加载", "ok");
+      } catch (e) {
+        setUpStatus("加载历史任务失败", "error");
+        upErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    tabButtons.forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+
+    runBtn.addEventListener("click", runReportByName);
+
+    scanBtn.addEventListener("click", fetchUptrendStocks);
+    refreshHistoryBtn.addEventListener("click", loadTaskHistory);
+    historyStatusSelect.addEventListener("change", loadTaskHistory);
+
+    clearBtn.addEventListener("click", () => {
+      uptrendItems = [];
+      upMetaEl.textContent = "";
+      upErrorEl.textContent = "";
+      renderUptrendRows(uptrendItems);
+      setUpStatus("已清空", "muted");
+    });
+
+    historyBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-task-id]");
+      if (!row) return;
+      const taskId = row.dataset.taskId;
+      if (!taskId) return;
+      Array.from(historyBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await loadTaskItems(taskId);
+    });
+
+    uptrendBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-code]");
+      if (!row) return;
+      const code = row.dataset.code;
+      if (!code) return;
+      Array.from(uptrendBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      const p = getUptrendParams();
+      await runReportByCode(code, {
+        threshold: p.threshold,
+        min_gap: p.min_gap,
+        lookback_days: p.lookback_days,
+        end_date: p.end_date,
+      });
     });
 
     openBtn.addEventListener("click", () => {
@@ -349,6 +843,9 @@
       clearTimeout(window.__viewerResizeTimer);
       window.__viewerResizeTimer = setTimeout(adjustIframeHeight, 120);
     });
+
+    switchTab("single");
+    loadTaskHistory();
   </script>
 </body>
 </html>

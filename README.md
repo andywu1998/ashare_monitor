@@ -140,14 +140,32 @@ python3 scripts/run_stock_sync_all_concurrent.py --concurrency 4 --on-alert cont
 
 ## 启动周期分析 Web 服务
 
+注意：
+
+- 服务监听端口固定为本机 `8888`。
+- 若使用内网穿透（例如外部访问 `14082`），那只是外部映射端口，服务本机仍是 `8888`。
+- `start_service.sh` 现在基于 **systemd user service** 管理（服务名：`ashare-cycle-web.service`）。
+
 ```bash
-sh start_service.sh start
+./start_service.sh start
 ```
 
 查看状态：
 
 ```bash
-sh start_service.sh status
+./start_service.sh status
+```
+
+查看日志：
+
+```bash
+./start_service.sh logs
+```
+
+若需要让用户服务在退出图形会话后仍可运行，可执行：
+
+```bash
+sudo loginctl enable-linger admin
 ```
 
 访问：

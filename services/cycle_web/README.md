@@ -20,12 +20,18 @@
 
 ```bash
 python -m pip install -r requirements.txt
-MYSQL_PASSWORD='YOUR_MYSQL_PASSWORD' uvicorn services.cycle_web.app:app --host 0.0.0.0 --port 8090
+./start_service.sh start
 ```
 
 然后打开：
 
-- `http://127.0.0.1:8090/ui/`
+- `http://127.0.0.1:8888/ui/`
+
+说明：
+
+- 本服务实际监听端口固定使用 `8888`。
+- 如果通过内网穿透以 `14082` 等端口访问，那是外部映射端口，不是服务进程监听端口。
+- `start_service.sh` 使用 systemd user service 托管，服务名为 `ashare-cycle-web.service`。
 
 ## API
 

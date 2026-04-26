@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -9,8 +10,27 @@ import pymysql
 from .config import MYSQL_CONFIG
 
 
-def get_connection():
-    return pymysql.connect(**MYSQL_CONFIG)
+def _build_mysql_config(mysql_config: dict | None = None) -> dict:
+    cfg = dict(MYSQL_CONFIG)
+    runtime_env = {
+        "host": os.getenv("MYSQL_HOST"),
+        "user": os.getenv("MYSQL_USER"),
+        "password": os.getenv("MYSQL_PASSWORD"),
+        "database": os.getenv("MYSQL_DATABASE"),
+    }
+    if os.getenv("MYSQL_PORT"):
+        runtime_env["port"] = int(os.getenv("MYSQL_PORT", "3306"))
+    cfg.update({k: v for k, v in runtime_env.items() if v not in (None, "")})
+    if mysql_config:
+        cfg.update({k: v for k, v in mysql_config.items() if v is not None})
+    password = str(cfg.get("password") or "").strip()
+    if password in {"YOUR_MYSQL_PASSWORD", "YOUR_PASSWORD", "CHANGE_ME"}:
+        cfg["password"] = ""
+    return cfg
+
+
+def get_connection(mysql_config: dict | None = None):
+    return pymysql.connect(**_build_mysql_config(mysql_config))
 
 
 def normalize_db_value(value):
@@ -151,3 +171,40 @@ def fetch_existing_daily_ts_codes(start_date, end_date) -> set[str]:
         with conn.cursor() as cursor:
             cursor.execute(sql, (start_date, end_date))
             return {row[0] for row in cursor.fetchall()}
+
+
+def fetch_all_stocks_with_last_trade(mysql_config: dict | None = None) -> list[tuple[str, str, object]]:
+    sql = """
+    SELECT
+        b.ts_code,
+        b.name,
+        MAX(d.trade_date) AS last_trade_date
+    FROM stock_basic b
+    LEFT JOIN stock_daily d ON b.ts_code = d.ts_code
+    WHERE b.list_status = 'L'
+    GROUP BY b.ts_code, b.name
+    ORDER BY b.ts_code
+    """
+    with get_connection(mysql_config=mysql_config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+            return list(cursor.fetchall())
+
+
+def fetch_daily_rows_for_stock(
+    ts_code: str,
+    start_date,
+    end_date,
+    mysql_config: dict | None = None,
+) -> list[tuple]:
+    sql = """
+    SELECT trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount
+    FROM stock_daily
+    WHERE ts_code = %s
+      AND trade_date BETWEEN %s AND %s
+    ORDER BY trade_date ASC
+    """
+    with get_connection(mysql_config=mysql_config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (ts_code, start_date, end_date))
+            return list(cursor.fetchall())

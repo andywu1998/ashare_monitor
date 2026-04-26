@@ -11,10 +11,17 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from ashare_monitor.cycle import zigzag_pivots
 
 
 @dataclass
@@ -134,58 +141,6 @@ def fetch_daily(ts_code: str, start: str, end: str, cfg: DbConfig) -> List[Dict[
             }
         )
     return out
-
-
-def zigzag_pivots(rows: List[Dict[str, Optional[float]]], threshold: float, min_gap: int) -> List[Tuple[int, str, float]]:
-    if not rows:
-        return []
-    pivot_idx = 0
-    pivot_price = float(rows[0]["close"] or 0)
-    trend = 0  # 0 unknown, 1 up, -1 down
-    cand_idx = 0
-    cand_price = float(rows[0]["close"] or 0)
-    pivots: List[Tuple[int, str, float]] = []
-
-    for i in range(1, len(rows)):
-        p = float(rows[i]["close"] or 0)
-        if trend == 0:
-            up = p / pivot_price - 1
-            down = pivot_price / p - 1
-            if up >= threshold:
-                trend = 1
-                cand_idx, cand_price = i, p
-                pivots.append((pivot_idx, "L", pivot_price))
-            elif down >= threshold:
-                trend = -1
-                cand_idx, cand_price = i, p
-                pivots.append((pivot_idx, "H", pivot_price))
-        elif trend == 1:
-            if p >= cand_price:
-                cand_idx, cand_price = i, p
-            elif (cand_price / p - 1) >= threshold and (i - pivot_idx) >= min_gap:
-                pivots.append((cand_idx, "H", cand_price))
-                pivot_idx, pivot_price = cand_idx, cand_price
-                trend = -1
-                cand_idx, cand_price = i, p
-        else:
-            if p <= cand_price:
-                cand_idx, cand_price = i, p
-            elif (p / cand_price - 1) >= threshold and (i - pivot_idx) >= min_gap:
-                pivots.append((cand_idx, "L", cand_price))
-                pivot_idx, pivot_price = cand_idx, cand_price
-                trend = 1
-                cand_idx, cand_price = i, p
-
-    if trend == 1:
-        pivots.append((cand_idx, "H", cand_price))
-    elif trend == -1:
-        pivots.append((cand_idx, "L", cand_price))
-
-    clean: List[Tuple[int, str, float]] = []
-    for p in pivots:
-        if not clean or (clean[-1][0], clean[-1][1]) != (p[0], p[1]):
-            clean.append(p)
-    return clean
 
 
 def make_html(
