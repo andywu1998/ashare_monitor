@@ -1878,7 +1878,7 @@ class GenerateRequest(BaseModel):
     mysql_password: Optional[str] = Field(
         None, description="If omitted, uses MYSQL_PASSWORD env var"
     )
-    asset_type: str = Field("E", description="E=stock, F=fund")
+    asset_type: str = Field("E", description="E=stock, H=hk stock, F=fund")
     output_format: str = Field("html", description="html|json|both")
     template_version: str = Field(DEFAULT_TEMPLATE_VERSION, description="report template version")
     async_mode: bool = Field(True, description="run in async task mode")
@@ -1897,7 +1897,7 @@ class GenerateByCodeRequest(BaseModel):
     mysql_password: Optional[str] = Field(
         None, description="If omitted, uses MYSQL_PASSWORD env var"
     )
-    asset_type: str = Field("E", description="E=stock, F=fund")
+    asset_type: str = Field("E", description="E=stock, H=hk stock, F=fund")
     output_format: str = Field("html", description="html|json|both")
     template_version: str = Field(DEFAULT_TEMPLATE_VERSION, description="report template version")
     async_mode: bool = Field(True, description="run in async task mode")
@@ -1929,8 +1929,8 @@ def _load_metadata(report_id: str) -> dict:
 
 def _find_asset_name_by_code(ts_code: str, mysql_cfg: dict, asset_type: str) -> str:
     safe_type = (asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    if safe_type not in {"E", "F", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/F/H")
     sql = """
     SELECT name
     FROM stock_basic
@@ -1952,8 +1952,8 @@ def _find_asset_name_by_code(ts_code: str, mysql_cfg: dict, asset_type: str) -> 
 
 def _latest_trade_date_by_asset(mysql_cfg: dict, asset_type: str) -> str:
     safe_type = (asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    if safe_type not in {"E", "F", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/F/H")
     sql = "SELECT MAX(trade_date) AS max_trade_date FROM stock_daily WHERE asset_type = %s"
     with _mysql_connect(mysql_cfg) as conn:
         with conn.cursor() as cursor:
@@ -1973,8 +1973,8 @@ def _resolve_asset_by_name(
     asset_type: str,
 ) -> tuple[str, str]:
     safe_type = (asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    if safe_type not in {"E", "F", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/F/H")
     query = (name or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="name is required")
@@ -2102,7 +2102,12 @@ def _generate_report_impl(
     if len(rows) < 20:
         raise HTTPException(status_code=422, detail="not enough data in requested range")
     pivots = zigzag_pivots(rows, threshold, min_gap)
-    asset_label = "基金" if safe_type == "F" else "A股"
+    if safe_type == "F":
+        asset_label = "基金"
+    elif safe_type == "H":
+        asset_label = "港股"
+    else:
+        asset_label = "A股"
     report_data = build_cycle_payload(
         stock_name=stock_name,
         ts_code=ts_code,
@@ -2308,7 +2313,7 @@ def health():
 @app.get("/api/suggestions")
 def get_asset_suggestions(
     query: str,
-    asset_type: str = "E",
+    asset_type: str = "S",
     limit: int = 10,
     mysql_host: str = DEFAULT_MYSQL_HOST,
     mysql_port: int = DEFAULT_MYSQL_PORT,
@@ -2333,7 +2338,7 @@ def get_asset_suggestions(
         )
         return {
             "query": query,
-            "asset_type": (asset_type or "E").strip().upper(),
+            "asset_type": (asset_type or "S").strip().upper(),
             "limit": safe_limit,
             "count": len(items),
             "items": items,
@@ -2354,8 +2359,8 @@ def generate_report(req: GenerateRequest):
         mysql_password=req.mysql_password,
     )
     safe_type = (req.asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    if safe_type not in {"E", "F", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/F/H")
     try:
         if req.async_mode:
             task_id = _submit_report_task(
@@ -2414,8 +2419,8 @@ def generate_report_by_code(req: GenerateByCodeRequest):
         mysql_password=req.mysql_password,
     )
     safe_type = (req.asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise HTTPException(status_code=400, detail="asset_type must be E or F")
+    if safe_type not in {"E", "F", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/F/H")
     ts_code = req.ts_code.strip().upper()
     try:
         if req.async_mode:

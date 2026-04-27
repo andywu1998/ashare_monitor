@@ -100,8 +100,8 @@ def suggest_assets(
 ) -> list[dict[str, Any]]:
     """Suggest stocks/funds from stock_basic with robust name matching."""
     safe_type = (asset_type or "E").strip().upper()
-    if safe_type not in {"E", "F"}:
-        raise ValueError("asset_type must be E or F")
+    if safe_type not in {"E", "F", "H", "S"}:
+        raise ValueError("asset_type must be E/F/H/S")
 
     query = (query or "").strip()
     if not query:
@@ -109,16 +109,25 @@ def suggest_assets(
 
     variants = build_query_variants(query)
     where_ext, args = _build_where_clause(variants)
+    where_asset = "asset_type = %s"
+    sql_args: list[Any]
+    if safe_type == "S":
+        where_asset = "asset_type IN ('E','H')"
+        sql_args = []
+    else:
+        sql_args = [safe_type]
+
     sql = f"""
     SELECT ts_code, symbol, name, asset_type
     FROM stock_basic
-    WHERE asset_type = %s
+    WHERE {where_asset}
       AND list_status = 'L'
       {where_ext}
     ORDER BY ts_code
     LIMIT %s
     """
-    sql_args: list[Any] = [safe_type] + args + [max(20, limit * 8)]
+    sql_args.extend(args)
+    sql_args.append(max(20, limit * 8))
     with mysql_connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute(sql, tuple(sql_args))
@@ -148,4 +157,3 @@ def suggest_assets(
         if len(out) >= limit:
             break
     return out
-
