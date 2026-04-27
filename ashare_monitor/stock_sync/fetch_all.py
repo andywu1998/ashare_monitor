@@ -20,6 +20,26 @@ REQUEST_INTERVAL_SECONDS = 0.25
 RATE_LIMIT_SLEEP_SECONDS = 65
 MAX_RETRIES = 5
 CHUNK_DAYS = 365 * 3
+MONEYFLOW_FIELD_NAMES = (
+    "buy_sm_vol",
+    "buy_sm_amount",
+    "sell_sm_vol",
+    "sell_sm_amount",
+    "buy_md_vol",
+    "buy_md_amount",
+    "sell_md_vol",
+    "sell_md_amount",
+    "buy_lg_vol",
+    "buy_lg_amount",
+    "sell_lg_vol",
+    "sell_lg_amount",
+    "buy_elg_vol",
+    "buy_elg_amount",
+    "sell_elg_vol",
+    "sell_elg_amount",
+    "net_mf_vol",
+    "net_mf_amount",
+)
 
 
 def parse_date(value: str):
@@ -98,12 +118,34 @@ def fetch_daily_rows(pro, ts_code: str, start_date: date, end_date: date):
     if df.empty:
         return []
 
+    moneyflow_map = {}
+    try:
+        mf_df = call_with_retry(
+            pro.moneyflow,
+            ts_code=ts_code,
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+        if mf_df is not None and not mf_df.empty:
+            for row in mf_df.itertuples(index=False):
+                trade_date = parse_date(getattr(row, "trade_date", None))
+                if trade_date is None:
+                    continue
+                moneyflow_map[trade_date] = {
+                    field: getattr(row, field, None) for field in MONEYFLOW_FIELD_NAMES
+                }
+    except Exception as exc:
+        print(f"moneyflow_fallback ts_code={ts_code} error={exc}")
+
     rows = []
     for row in df.itertuples(index=False):
+        trade_date = parse_date(row.trade_date)
+        mf = moneyflow_map.get(trade_date, {})
         rows.append(
             (
                 row.ts_code,
-                parse_date(row.trade_date),
+                trade_date,
+                "E",
                 row.open,
                 row.high,
                 row.low,
@@ -113,6 +155,31 @@ def fetch_daily_rows(pro, ts_code: str, start_date: date, end_date: date):
                 row.pct_chg,
                 row.vol,
                 row.amount,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                mf.get("buy_sm_vol"),
+                mf.get("buy_sm_amount"),
+                mf.get("sell_sm_vol"),
+                mf.get("sell_sm_amount"),
+                mf.get("buy_md_vol"),
+                mf.get("buy_md_amount"),
+                mf.get("sell_md_vol"),
+                mf.get("sell_md_amount"),
+                mf.get("buy_lg_vol"),
+                mf.get("buy_lg_amount"),
+                mf.get("sell_lg_vol"),
+                mf.get("sell_lg_amount"),
+                mf.get("buy_elg_vol"),
+                mf.get("buy_elg_amount"),
+                mf.get("sell_elg_vol"),
+                mf.get("sell_elg_amount"),
+                mf.get("net_mf_vol"),
+                mf.get("net_mf_amount"),
             )
         )
     return rows

@@ -29,6 +29,8 @@ ashare_monitor/
 │   ├── run_stock_sync_one.py
 │   ├── run_stock_sync_all.py
 │   └── run_stock_sync_all_concurrent.py
+│   ├── run_stock_sync_recent_days.py
+│   └── run_stock_moneyflow_recent_days.py
 ├── services/
 │   └── cycle_web/
 ├── configs/
@@ -137,6 +139,20 @@ python3 scripts/run_stock_sync_all_concurrent.py --concurrency 4 --on-alert cont
 
 - 首次运行会按 `ashare_monitor/stock_sync/schema.sql` 自动建表（`stock_basic` / `stock_daily`）
 - 表存在时会做 UPSERT，支持重复执行
+- `stock_daily` 已包含主力资金流字段（`buy_*` / `sell_*` / `net_mf_*`）
+
+### 5) 按交易日同步主力资金流（全市场）
+
+按交易日逐天拉取，避免 TuShare `moneyflow` 多日请求被 6000 行上限截断：
+
+```bash
+python3 scripts/run_stock_moneyflow_recent_days.py --days 30
+```
+
+可选参数：
+
+- `--end-date YYYY-MM-DD`：指定结束日期（默认今天）
+- `--exchange SSE|SZSE`：交易日历交易所（默认 SSE）
 
 ## 启动周期分析 Web 服务
 

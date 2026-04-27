@@ -75,9 +75,29 @@ def execute_sql_file(path: str) -> None:
                 "ALTER TABLE stock_daily ADD COLUMN net_asset DECIMAL(20,4) NULL",
                 "ALTER TABLE stock_daily ADD COLUMN total_netasset DECIMAL(20,4) NULL",
                 "ALTER TABLE stock_daily ADD COLUMN adj_nav DECIMAL(16,6) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_sm_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_sm_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_sm_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_sm_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_md_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_md_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_md_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_md_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_lg_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_lg_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_lg_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_lg_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_elg_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN buy_elg_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_elg_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN sell_elg_amount DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN net_mf_vol DECIMAL(20,4) NULL",
+                "ALTER TABLE stock_daily ADD COLUMN net_mf_amount DECIMAL(20,4) NULL",
                 "CREATE INDEX idx_asset_type_status ON stock_basic (asset_type, list_status)",
                 "CREATE INDEX idx_asset_trade_date ON stock_daily (asset_type, trade_date)",
                 "CREATE INDEX idx_trade_date_pct_chg ON stock_daily (trade_date, pct_chg)",
+                "CREATE INDEX idx_trade_date_net_mf_amount ON stock_daily (trade_date, net_mf_amount)",
+                "CREATE INDEX idx_asset_trade_date_net_mf_amount ON stock_daily (asset_type, trade_date, net_mf_amount)",
             ]
             for alter_sql in alters:
                 try:
@@ -92,11 +112,21 @@ def upsert_stock_daily(rows: Iterable[tuple]) -> int:
     INSERT INTO stock_daily (
         ts_code, trade_date, asset_type, open, high, low, close, pre_close,
         `change`, pct_chg, vol, amount, ann_date, unit_nav, accum_nav,
-        accum_div, net_asset, total_netasset, adj_nav
+        accum_div, net_asset, total_netasset, adj_nav,
+        buy_sm_vol, buy_sm_amount, sell_sm_vol, sell_sm_amount,
+        buy_md_vol, buy_md_amount, sell_md_vol, sell_md_amount,
+        buy_lg_vol, buy_lg_amount, sell_lg_vol, sell_lg_amount,
+        buy_elg_vol, buy_elg_amount, sell_elg_vol, sell_elg_amount,
+        net_mf_vol, net_mf_amount
     ) VALUES (
         %s, %s, %s, %s, %s, %s, %s, %s,
         %s, %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s
     )
     ON DUPLICATE KEY UPDATE
         asset_type = VALUES(asset_type),
@@ -115,7 +145,25 @@ def upsert_stock_daily(rows: Iterable[tuple]) -> int:
         accum_div = VALUES(accum_div),
         net_asset = VALUES(net_asset),
         total_netasset = VALUES(total_netasset),
-        adj_nav = VALUES(adj_nav)
+        adj_nav = VALUES(adj_nav),
+        buy_sm_vol = VALUES(buy_sm_vol),
+        buy_sm_amount = VALUES(buy_sm_amount),
+        sell_sm_vol = VALUES(sell_sm_vol),
+        sell_sm_amount = VALUES(sell_sm_amount),
+        buy_md_vol = VALUES(buy_md_vol),
+        buy_md_amount = VALUES(buy_md_amount),
+        sell_md_vol = VALUES(sell_md_vol),
+        sell_md_amount = VALUES(sell_md_amount),
+        buy_lg_vol = VALUES(buy_lg_vol),
+        buy_lg_amount = VALUES(buy_lg_amount),
+        sell_lg_vol = VALUES(sell_lg_vol),
+        sell_lg_amount = VALUES(sell_lg_amount),
+        buy_elg_vol = VALUES(buy_elg_vol),
+        buy_elg_amount = VALUES(buy_elg_amount),
+        sell_elg_vol = VALUES(sell_elg_vol),
+        sell_elg_amount = VALUES(sell_elg_amount),
+        net_mf_vol = VALUES(net_mf_vol),
+        net_mf_amount = VALUES(net_mf_amount)
     """
     normalized_rows = []
     for row in rows:
@@ -126,9 +174,74 @@ def upsert_stock_daily(rows: Iterable[tuple]) -> int:
                 row[2], row[3], row[4], row[5], row[6],
                 row[7], row[8], row[9], row[10],
                 None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
+                None, None,
             )
+        elif len(row) == 19:
+            # current OHLCV/nav tuple, without moneyflow
+            row = (
+                row[0], row[1], row[2],
+                row[3], row[4], row[5], row[6], row[7],
+                row[8], row[9], row[10], row[11], row[12], row[13], row[14],
+                row[15], row[16], row[17], row[18],
+                None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
+                None, None,
+            )
+        elif len(row) != 37:
+            raise ValueError(f"unsupported stock_daily tuple length={len(row)}")
         normalized_rows.append(row)
     data = normalize_db_rows(normalized_rows)
+    if not data:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.executemany(sql, data)
+        conn.commit()
+    return len(data)
+
+
+def upsert_stock_moneyflow(rows: Iterable[tuple]) -> int:
+    sql = """
+    INSERT INTO stock_daily (
+        ts_code, trade_date, asset_type,
+        buy_sm_vol, buy_sm_amount, sell_sm_vol, sell_sm_amount,
+        buy_md_vol, buy_md_amount, sell_md_vol, sell_md_amount,
+        buy_lg_vol, buy_lg_amount, sell_lg_vol, sell_lg_amount,
+        buy_elg_vol, buy_elg_amount, sell_elg_vol, sell_elg_amount,
+        net_mf_vol, net_mf_amount
+    ) VALUES (
+        %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s
+    )
+    ON DUPLICATE KEY UPDATE
+        asset_type = VALUES(asset_type),
+        buy_sm_vol = VALUES(buy_sm_vol),
+        buy_sm_amount = VALUES(buy_sm_amount),
+        sell_sm_vol = VALUES(sell_sm_vol),
+        sell_sm_amount = VALUES(sell_sm_amount),
+        buy_md_vol = VALUES(buy_md_vol),
+        buy_md_amount = VALUES(buy_md_amount),
+        sell_md_vol = VALUES(sell_md_vol),
+        sell_md_amount = VALUES(sell_md_amount),
+        buy_lg_vol = VALUES(buy_lg_vol),
+        buy_lg_amount = VALUES(buy_lg_amount),
+        sell_lg_vol = VALUES(sell_lg_vol),
+        sell_lg_amount = VALUES(sell_lg_amount),
+        buy_elg_vol = VALUES(buy_elg_vol),
+        buy_elg_amount = VALUES(buy_elg_amount),
+        sell_elg_vol = VALUES(sell_elg_vol),
+        sell_elg_amount = VALUES(sell_elg_amount),
+        net_mf_vol = VALUES(net_mf_vol),
+        net_mf_amount = VALUES(net_mf_amount)
+    """
+    data = normalize_db_rows(rows)
     if not data:
         return 0
 

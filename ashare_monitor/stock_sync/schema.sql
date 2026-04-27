@@ -18,12 +18,32 @@ CREATE TABLE IF NOT EXISTS stock_daily (
     net_asset DECIMAL(20,4) NULL,
     total_netasset DECIMAL(20,4) NULL,
     adj_nav DECIMAL(16,6) NULL,
+    buy_sm_vol DECIMAL(20,4) NULL,
+    buy_sm_amount DECIMAL(20,4) NULL,
+    sell_sm_vol DECIMAL(20,4) NULL,
+    sell_sm_amount DECIMAL(20,4) NULL,
+    buy_md_vol DECIMAL(20,4) NULL,
+    buy_md_amount DECIMAL(20,4) NULL,
+    sell_md_vol DECIMAL(20,4) NULL,
+    sell_md_amount DECIMAL(20,4) NULL,
+    buy_lg_vol DECIMAL(20,4) NULL,
+    buy_lg_amount DECIMAL(20,4) NULL,
+    sell_lg_vol DECIMAL(20,4) NULL,
+    sell_lg_amount DECIMAL(20,4) NULL,
+    buy_elg_vol DECIMAL(20,4) NULL,
+    buy_elg_amount DECIMAL(20,4) NULL,
+    sell_elg_vol DECIMAL(20,4) NULL,
+    sell_elg_amount DECIMAL(20,4) NULL,
+    net_mf_vol DECIMAL(20,4) NULL,
+    net_mf_amount DECIMAL(20,4) NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (ts_code, trade_date),
     KEY idx_trade_date (trade_date),
     KEY idx_trade_date_pct_chg (trade_date, pct_chg),
-    KEY idx_asset_trade_date (asset_type, trade_date)
+    KEY idx_asset_trade_date (asset_type, trade_date),
+    KEY idx_trade_date_net_mf_amount (trade_date, net_mf_amount),
+    KEY idx_asset_trade_date_net_mf_amount (asset_type, trade_date, net_mf_amount)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stock_basic (
