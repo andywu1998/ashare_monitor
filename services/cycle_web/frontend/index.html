@@ -217,10 +217,80 @@
       background: #fff;
       padding: 8px;
     }
-    #cycleCanvas {
+    .chart-card:fullscreen {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      border: none;
+      margin: 0;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+    }
+    .chart-card:fullscreen .cycle-chart-wrap {
+      flex: 1;
+      min-height: 0;
+      aspect-ratio: auto;
+    }
+    .cycle-chart-wrap {
       width: 100%;
-      height: 420px;
+      aspect-ratio: 16/10;
+      min-height: 280px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      touch-action: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+    .cycle-main-pane {
+      flex: 1;
+      min-height: 180px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .cycle-sub-pane {
+      height: 32%;
+      min-height: 90px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #cycleMainCanvas,
+    #cycleSubCanvas {
+      width: 100%;
+      height: 100%;
       display: block;
+      touch-action: none;
+    }
+    .cycle-sub-switch {
+      margin-top: 8px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .cycle-sub-switch button.active {
+      border-color: #2563eb;
+      color: #2563eb;
+      background: #eff6ff;
+    }
+    .cycle-tools {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .cycle-hint {
+      margin-top: 6px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.4;
     }
     .report-table-wrap {
       margin-top: 8px;
@@ -262,8 +332,10 @@
       overflow: auto;
       padding: 12px;
     }
-    .report-panel:fullscreen #cycleCanvas {
+    .report-panel:fullscreen .cycle-chart-wrap {
       height: 68vh;
+      min-height: 320px;
+      aspect-ratio: auto;
     }
     .hint {
       color: #64748b;
@@ -371,8 +443,8 @@
         height: 72vh;
         min-height: 520px;
       }
-      #cycleCanvas {
-        height: 360px;
+      .cycle-chart-wrap {
+        min-height: 260px;
       }
     }
     @media (max-width: 900px) {
@@ -720,8 +792,27 @@
           <div id="reportContent" class="hidden">
             <div id="reportMeta" class="cycle-meta"></div>
             <div id="reportSummary" class="summary"></div>
-            <div class="chart-card" style="margin-top:8px">
-              <canvas id="cycleCanvas"></canvas>
+            <div id="cycleChartPanel" class="chart-card" style="margin-top:8px">
+              <div id="cycleChartWrap" class="cycle-chart-wrap">
+                <div class="cycle-main-pane">
+                  <canvas id="cycleMainCanvas"></canvas>
+                </div>
+                <div class="cycle-sub-pane">
+                  <canvas id="cycleSubCanvas"></canvas>
+                </div>
+              </div>
+              <div class="cycle-sub-switch">
+                <button id="cycleSubVol" class="secondary active" type="button">成交量</button>
+                <button id="cycleSubAmount" class="secondary" type="button">成交额</button>
+                <button id="cycleSubPct" class="secondary" type="button">涨跌幅</button>
+              </div>
+              <div class="cycle-tools">
+                <button id="cycleZoomIn" class="secondary" type="button">放大</button>
+                <button id="cycleZoomOut" class="secondary" type="button">缩小</button>
+                <button id="cycleZoomReset" class="secondary" type="button">重置</button>
+                <button id="cycleFullscreen" class="secondary" type="button">全屏</button>
+              </div>
+              <div class="cycle-hint">触控板双指滑动=平移；双指捏合或 Alt/Ctrl+滚轮=缩放。</div>
             </div>
             <div class="report-table-wrap">
               <table>
@@ -804,8 +895,18 @@
     const reportContentEl = document.getElementById("reportContent");
     const reportMetaEl = document.getElementById("reportMeta");
     const reportSummaryEl = document.getElementById("reportSummary");
-    const cycleCanvas = document.getElementById("cycleCanvas");
+    const cycleChartPanel = document.getElementById("cycleChartPanel");
+    const cycleChartWrap = document.getElementById("cycleChartWrap");
+    const cycleMainCanvas = document.getElementById("cycleMainCanvas");
+    const cycleSubCanvas = document.getElementById("cycleSubCanvas");
+    const cycleSubVolBtn = document.getElementById("cycleSubVol");
+    const cycleSubAmountBtn = document.getElementById("cycleSubAmount");
+    const cycleSubPctBtn = document.getElementById("cycleSubPct");
     const cycleTableBody = document.getElementById("cycleTableBody");
+    const cycleZoomInBtn = document.getElementById("cycleZoomIn");
+    const cycleZoomOutBtn = document.getElementById("cycleZoomOut");
+    const cycleZoomResetBtn = document.getElementById("cycleZoomReset");
+    const cycleFullscreenBtn = document.getElementById("cycleFullscreen");
     const viewer = document.getElementById("viewer");
     const iframeWrap = document.getElementById("iframeWrap");
     let uptrendItems = [];
@@ -817,6 +918,23 @@
     let currentHtmlUrl = "";
     let currentReportData = null;
     let reportRenderMode = "none";
+    const cycleView = { left: 0, right: 0, minBars: 24 };
+    let cycleDragActive = false;
+    let cycleDragStartX = 0;
+    let cycleDragStartLeft = 0;
+    let cycleDragStartRight = 0;
+    let cyclePinchDist = 0;
+    let cyclePinchSpan = 0;
+    let cyclePinchAnchor = 0;
+    let cycleGestureScale = 1;
+    let cycleGestureBaseSpan = 0;
+    let cycleGestureAnchor = 0;
+    let cyclePanVelocity = 0;
+    let cyclePanLastX = null;
+    let cyclePanLastTs = 0;
+    let cycleInertiaRaf = 0;
+    let cycleDrawRaf = 0;
+    let cycleSubMode = "vol";
     let suggestTimer = null;
     let activeSuggestBox = null;
 
@@ -965,80 +1083,411 @@
       }).join("");
     }
 
-    function drawCycleCanvas(reportData) {
-      if (!cycleCanvas) return;
-      const ctx = cycleCanvas.getContext("2d");
-      const dpr = window.devicePixelRatio || 1;
-      const width = Math.max(320, cycleCanvas.clientWidth || 320);
-      const height = Math.max(280, cycleCanvas.clientHeight || 280);
-      cycleCanvas.width = Math.floor(width * dpr);
-      cycleCanvas.height = Math.floor(height * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, width, height);
+    function cycleClampView(total) {
+      const maxRight = Math.max(0, total - 1);
+      let span = cycleView.right - cycleView.left;
+      const minSpan = Math.min(cycleView.minBars, maxRight);
+      const maxSpan = Math.max(minSpan, maxRight);
+      span = Math.max(minSpan, Math.min(maxSpan, span));
+      if (cycleView.left < 0) {
+        cycleView.left = 0;
+        cycleView.right = cycleView.left + span;
+      }
+      if (cycleView.right > maxRight) {
+        cycleView.right = maxRight;
+        cycleView.left = cycleView.right - span;
+      }
+      if (cycleView.left < 0) cycleView.left = 0;
+      if (cycleView.right <= cycleView.left) cycleView.right = Math.min(maxRight, cycleView.left + minSpan);
+    }
 
-      const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
-      if (!candles.length) return;
-      const pivots = Array.isArray(reportData?.pivots) ? reportData.pivots : [];
+    function cycleSetView(left, right, total) {
+      cycleView.left = left;
+      cycleView.right = right;
+      cycleClampView(total);
+    }
 
-      const pad = { l: 56, r: 14, t: 14, b: 28 };
-      const cw = width - pad.l - pad.r;
-      const ch = height - pad.t - pad.b;
-      const highs = candles.map((x) => Number(x.high || 0));
-      const lows = candles.map((x) => Number(x.low || 0));
-      const maxP = Math.max(...highs);
-      const minP = Math.min(...lows);
-      const span = Math.max(0.01, maxP - minP);
-      const xOf = (i) => pad.l + (i / Math.max(1, candles.length - 1)) * cw;
-      const yOf = (p) => pad.t + ((maxP - p) / span) * ch;
+    function cycleZoomAt(scale, anchorIdx, total) {
+      const oldSpan = cycleView.right - cycleView.left;
+      const maxSpan = Math.max(0, total - 1);
+      const minSpan = Math.min(cycleView.minBars, maxSpan);
+      let newSpan = oldSpan * scale;
+      newSpan = Math.max(minSpan, Math.min(maxSpan, newSpan));
+      const ratio = (anchorIdx - cycleView.left) / Math.max(1e-6, oldSpan);
+      const newLeft = anchorIdx - ratio * newSpan;
+      cycleSetView(newLeft, newLeft + newSpan, total);
+    }
 
-      ctx.strokeStyle = "#cbd5e1";
+    function cyclePanBy(deltaIdx, total) {
+      cycleSetView(cycleView.left + deltaIdx, cycleView.right + deltaIdx, total);
+    }
+
+    function cycleIdxFromClientX(clientX, rect) {
+      const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      const frac = x / Math.max(1, rect.width);
+      return cycleView.left + frac * (cycleView.right - cycleView.left);
+    }
+
+    function cycleVisibleRange(total) {
+      const leftIdx = Math.max(0, Math.floor(cycleView.left));
+      const rightIdx = Math.min(Math.max(0, total - 1), Math.ceil(cycleView.right));
+      return { leftIdx, rightIdx };
+    }
+
+    function cycleResetView(reportData) {
+      const total = Array.isArray(reportData?.candles) ? reportData.candles.length : 0;
+      if (!total) {
+        cycleView.left = 0;
+        cycleView.right = 0;
+        return;
+      }
+      cycleView.left = 0;
+      cycleView.right = total - 1;
+      cycleClampView(total);
+    }
+
+    function cycleTouchDistance(a, b) {
+      const dx = Number(a.clientX || 0) - Number(b.clientX || 0);
+      const dy = Number(a.clientY || 0) - Number(b.clientY || 0);
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function cycleFormatLarge(v) {
+      const n = Number(v || 0);
+      const av = Math.abs(n);
+      if (av >= 1e8) return `${(n / 1e8).toFixed(2)}亿`;
+      if (av >= 1e4) return `${(n / 1e4).toFixed(2)}万`;
+      return n.toFixed(2);
+    }
+
+    function cycleDrawGrid(ctx, W, H, pad, yLabels, labelFormatter) {
+      const cw = W - pad.l - pad.r;
+      const ch = H - pad.t - pad.b;
+      ctx.strokeStyle = "#e2e8f0";
       ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(pad.l, pad.t);
-      ctx.lineTo(pad.l, pad.t + ch);
-      ctx.lineTo(pad.l + cw, pad.t + ch);
-      ctx.stroke();
-
       ctx.fillStyle = "#64748b";
-      ctx.font = "11px sans-serif";
-      ctx.textAlign = "right";
-      ctx.textBaseline = "middle";
-      ctx.fillText(maxP.toFixed(2), pad.l - 6, pad.t + 6);
-      ctx.fillText(minP.toFixed(2), pad.l - 6, pad.t + ch - 6);
-
-      const barW = Math.max(1, Math.min(10, (cw / Math.max(10, candles.length)) * 0.55));
-      candles.forEach((x, i) => {
-        const open = Number(x.open || 0);
-        const high = Number(x.high || 0);
-        const low = Number(x.low || 0);
-        const close = Number(x.close || 0);
-        const px = xOf(i);
-        const yH = yOf(high);
-        const yL = yOf(low);
-        const yO = yOf(open);
-        const yC = yOf(close);
-        const color = close >= open ? "#dc2626" : "#059669";
-        ctx.strokeStyle = color;
+      ctx.font = W < 640 ? "10px sans-serif" : "12px sans-serif";
+      for (let i = 0; i < yLabels; i++) {
+        const k = i / (yLabels - 1);
+        const y = pad.t + k * ch;
         ctx.beginPath();
-        ctx.moveTo(px, yH);
-        ctx.lineTo(px, yL);
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(W - pad.r, y);
         ctx.stroke();
-        ctx.fillStyle = color;
-        ctx.fillRect(px - barW / 2, Math.min(yO, yC), barW, Math.max(1, Math.abs(yO - yC)));
+        ctx.fillText(labelFormatter(k), 4, y + 4);
+      }
+    }
+
+    function cycleLine(ctx, pts, color, widthPx) {
+      if (!pts.length) return;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = widthPx;
+      ctx.stroke();
+    }
+
+    function cycleDrawTag(ctx, x, y, text, color, mobile) {
+      ctx.font = mobile ? "10px sans-serif" : "11px sans-serif";
+      const padX = mobile ? 5 : 6;
+      const padY = mobile ? 2 : 3;
+      const tw = ctx.measureText(text).width;
+      const w = tw + padX * 2;
+      const h = (mobile ? 12 : 14) + padY * 2;
+      const x0 = x - w / 2;
+      const y0 = y - h / 2;
+      const r = 4;
+      ctx.beginPath();
+      ctx.moveTo(x0 + r, y0);
+      ctx.lineTo(x0 + w - r, y0);
+      ctx.quadraticCurveTo(x0 + w, y0, x0 + w, y0 + r);
+      ctx.lineTo(x0 + w, y0 + h - r);
+      ctx.quadraticCurveTo(x0 + w, y0 + h, x0 + w - r, y0 + h);
+      ctx.lineTo(x0 + r, y0 + h);
+      ctx.quadraticCurveTo(x0, y0 + h, x0, y0 + h - r);
+      ctx.lineTo(x0, y0 + r);
+      ctx.quadraticCurveTo(x0, y0, x0 + r, y0);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(255,255,255,0.86)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(148,163,184,0.55)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, x0 + padX, y0 + h / 2 + 0.5);
+    }
+
+    function drawCycleCanvas(reportData) {
+      if (!cycleMainCanvas || !cycleSubCanvas || !cycleChartWrap) return;
+      const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
+      const pivots = Array.isArray(reportData?.pivots) ? reportData.pivots : [];
+      const cycles = Array.isArray(reportData?.cycles) ? reportData.cycles : [];
+      if (!candles.length) return;
+
+      cycleClampView(candles.length);
+      const { leftIdx, rightIdx } = cycleVisibleRange(candles.length);
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = Math.max(280, cycleChartWrap.clientWidth);
+      const cssH = Math.max(260, cycleChartWrap.clientHeight || Math.round(cssW * 0.62));
+      const mainCssH = Math.max(180, Math.floor((cssH - 8) * 0.7));
+      const subCssH = Math.max(90, cssH - 8 - mainCssH);
+
+      const mainCtx = cycleMainCanvas.getContext("2d");
+      const subCtx = cycleSubCanvas.getContext("2d");
+      cycleMainCanvas.width = Math.floor(cssW * dpr);
+      cycleMainCanvas.height = Math.floor(mainCssH * dpr);
+      cycleSubCanvas.width = Math.floor(cssW * dpr);
+      cycleSubCanvas.height = Math.floor(subCssH * dpr);
+      mainCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      subCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      mainCtx.clearRect(0, 0, cssW, mainCssH);
+      subCtx.clearRect(0, 0, cssW, subCssH);
+
+      const mobile = cssW < 640;
+      const mainPad = mobile ? { l: 44, r: 12, t: 18, b: 12 } : { l: 62, r: 14, t: 22, b: 16 };
+      const subPad = mobile ? { l: 44, r: 12, t: 14, b: 26 } : { l: 62, r: 14, t: 16, b: 30 };
+      const mainCw = cssW - mainPad.l - mainPad.r;
+      const mainCh = mainCssH - mainPad.t - mainPad.b;
+      const subCw = cssW - subPad.l - subPad.r;
+      const subCh = subCssH - subPad.t - subPad.b;
+
+      const opens = candles.map((c, i) => Number(c.open ?? c.close ?? 0));
+      const highs = candles.map((c, i) => Number(c.high ?? Math.max(opens[i], Number(c.close ?? 0))));
+      const lows = candles.map((c, i) => Number(c.low ?? Math.min(opens[i], Number(c.close ?? 0))));
+      const closes = candles.map((c) => Number(c.close ?? 0));
+      const pctChgs = candles.map((c) => Number(c.pct_chg ?? 0));
+      const vols = candles.map((c) => Number(c.vol ?? 0));
+      const amounts = candles.map((c) => Number(c.amount ?? 0));
+      const preCloses = closes.map((v, i) => (i > 0 ? closes[i - 1] : opens[i]));
+      const changes = closes.map((v, i) => v - preCloses[i]);
+      const dates = candles.map((c) => String(c.trade_date || ""));
+
+      const visibleHigh = highs.slice(leftIdx, rightIdx + 1);
+      const visibleLow = lows.slice(leftIdx, rightIdx + 1);
+      const rawMin = Math.min(...visibleLow);
+      const rawMax = Math.max(...visibleHigh);
+      const padPct = Math.max((rawMax - rawMin) * 0.08, rawMax * 0.01, 0.01);
+      const minP = rawMin - padPct;
+      const maxP = rawMax + padPct;
+      const xOf = (i) => mainPad.l + ((i - cycleView.left) / (cycleView.right - cycleView.left || 1)) * mainCw;
+      const yOf = (p) => mainPad.t + ((maxP - p) / (maxP - minP || 1)) * mainCh;
+      const bars = Math.max(1, rightIdx - leftIdx + 1);
+
+      mainCtx.fillStyle = "#fff";
+      mainCtx.fillRect(0, 0, cssW, mainCssH);
+      cycleDrawGrid(mainCtx, cssW, mainCssH, mainPad, 6, (k) => (maxP - k * (maxP - minP)).toFixed(2));
+
+      const step = mainCw / Math.max(1, bars);
+      const bodyW = Math.max(1, Math.min(12, step * 0.65));
+      for (let i = leftIdx; i <= rightIdx; i++) {
+        const x = xOf(i);
+        const o = opens[i];
+        const h = highs[i];
+        const l = lows[i];
+        const c = closes[i];
+        const up = c >= o;
+        const color = up ? "#dc2626" : "#059669";
+        const yH = yOf(h);
+        const yL = yOf(l);
+        const yO = yOf(o);
+        const yC = yOf(c);
+        mainCtx.strokeStyle = color;
+        mainCtx.lineWidth = 1;
+        mainCtx.beginPath();
+        mainCtx.moveTo(x, yH);
+        mainCtx.lineTo(x, yL);
+        mainCtx.stroke();
+        mainCtx.fillStyle = color;
+        mainCtx.fillRect(x - bodyW / 2, Math.min(yO, yC), bodyW, Math.max(1, Math.abs(yO - yC)));
+      }
+
+      const zzPts = pivots
+        .map((p) => ({ i: Number(p.idx ?? p.i ?? 0), price: Number(p.price ?? 0), type: String(p.type || "") }))
+        .filter((p) => p.i >= leftIdx && p.i <= rightIdx)
+        .map((p) => [xOf(p.i), yOf(p.price)]);
+      cycleLine(mainCtx, zzPts, "#f59e0b", mobile ? 2.2 : 2.8);
+
+      cycles.forEach((seg) => {
+        const s = Number(seg.start_idx ?? 0);
+        const e = Number(seg.end_idx ?? 0);
+        if (e < leftIdx || s > rightIdx) return;
+        const x1 = xOf(s);
+        const y1 = yOf(Number(seg.start_price ?? 0));
+        const x2 = xOf(e);
+        const y2 = yOf(Number(seg.end_price ?? 0));
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2;
+        const pct = Number(seg.chg_pct ?? 0);
+        const txt = `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+        const color = pct >= 0 ? "#b91c1c" : "#065f46";
+        const dy = y2 > y1 ? -12 : 12;
+        cycleDrawTag(mainCtx, mx, my + dy, txt, color, mobile);
       });
 
-      if (pivots.length > 1) {
-        ctx.strokeStyle = "#f59e0b";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        pivots.forEach((p, idx) => {
-          const px = xOf(Number(p.idx || 0));
-          const py = yOf(Number(p.price || 0));
-          if (idx === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
-        ctx.stroke();
+      pivots.forEach((p, idx) => {
+        const pi = Number(p.idx ?? p.i ?? 0);
+        if (pi < leftIdx || pi > rightIdx) return;
+        const px = xOf(pi);
+        const py = yOf(Number(p.price ?? 0));
+        mainCtx.beginPath();
+        mainCtx.arc(px, py, mobile ? 3 : 4, 0, Math.PI * 2);
+        mainCtx.fillStyle = String(p.type || "") === "H" ? "#dc2626" : "#059669";
+        mainCtx.fill();
+        if (!mobile || idx % 2 === 0) {
+          mainCtx.fillStyle = "#0f172a";
+          mainCtx.font = mobile ? "10px sans-serif" : "12px sans-serif";
+          mainCtx.fillText(`P${idx + 1}`, px + 5, py - 5);
+        }
+      });
+
+      mainCtx.fillStyle = "#475569";
+      mainCtx.font = mobile ? "10px sans-serif" : "11px sans-serif";
+      mainCtx.fillText(`窗口: ${bars} 日`, cssW - (mobile ? 68 : 90), mainPad.t - 6);
+      const latestIdx = rightIdx;
+      const sign = changes[latestIdx] >= 0 ? "+" : "";
+      mainCtx.fillText(
+        `最新: C ${closes[latestIdx].toFixed(2)}  ${sign}${changes[latestIdx].toFixed(2)} (${sign}${pctChgs[latestIdx].toFixed(2)}%)`,
+        mainPad.l + 4,
+        mainPad.t - 6
+      );
+
+      subCtx.fillStyle = "#fff";
+      subCtx.fillRect(0, 0, cssW, subCssH);
+      const vals = [];
+      for (let i = leftIdx; i <= rightIdx; i++) {
+        if (cycleSubMode === "vol") vals.push(vols[i] || 0);
+        else if (cycleSubMode === "amount") vals.push(amounts[i] || 0);
+        else vals.push(pctChgs[i] || 0);
       }
+      let subMin = 0;
+      let subMax = Math.max(...vals, 0);
+      if (cycleSubMode === "pct") {
+        subMin = Math.min(...vals, 0);
+        subMax = Math.max(...vals, 0);
+      }
+      const subPadVal = Math.max((subMax - subMin) * 0.1, Math.abs(subMax) * 0.04, 1e-6);
+      subMin -= subPadVal;
+      subMax += subPadVal;
+      const subX = (i) => subPad.l + ((i - cycleView.left) / (cycleView.right - cycleView.left || 1)) * subCw;
+      const subY = (v) => subPad.t + ((subMax - v) / (subMax - subMin || 1)) * subCh;
+      cycleDrawGrid(subCtx, cssW, subCssH, subPad, 4, (k) => {
+        const cur = subMax - k * (subMax - subMin);
+        if (cycleSubMode === "pct") return `${cur.toFixed(2)}%`;
+        return cycleFormatLarge(cur);
+      });
+
+      if (cycleSubMode === "pct") {
+        const pctPts = [];
+        for (let i = leftIdx; i <= rightIdx; i++) pctPts.push([subX(i), subY(pctChgs[i] || 0)]);
+        cycleLine(subCtx, pctPts, "#2563eb", mobile ? 1.5 : 1.8);
+        const y0 = subY(0);
+        subCtx.strokeStyle = "#94a3b8";
+        subCtx.setLineDash([4, 3]);
+        subCtx.beginPath();
+        subCtx.moveTo(subPad.l, y0);
+        subCtx.lineTo(cssW - subPad.r, y0);
+        subCtx.stroke();
+        subCtx.setLineDash([]);
+      } else {
+        const subStep = subCw / Math.max(1, bars);
+        const bw = Math.max(1, Math.min(10, subStep * 0.62));
+        const y0 = subY(0);
+        for (let i = leftIdx; i <= rightIdx; i++) {
+          const value = cycleSubMode === "vol" ? (vols[i] || 0) : (amounts[i] || 0);
+          const x = subX(i);
+          const y = subY(value);
+          const up = closes[i] >= preCloses[i];
+          subCtx.fillStyle = up ? "rgba(220,38,38,0.82)" : "rgba(5,150,105,0.82)";
+          subCtx.fillRect(x - bw / 2, Math.min(y, y0), bw, Math.max(1, Math.abs(y0 - y)));
+        }
+      }
+
+      const ticks = Math.max(3, Math.min(8, Math.floor(cssW / 100)));
+      subCtx.fillStyle = "#64748b";
+      subCtx.font = mobile ? "10px sans-serif" : "12px sans-serif";
+      for (let i = 0; i <= ticks; i++) {
+        const idx = Math.round(cycleView.left + (i / ticks) * (cycleView.right - cycleView.left));
+        const x = subX(idx);
+        const txt = mobile ? dates[idx].slice(5) : dates[idx];
+        subCtx.fillText(txt, x - (mobile ? 16 : 30), subCssH - 10);
+      }
+      const subTitle = cycleSubMode === "vol" ? "成交量(手)" : (cycleSubMode === "amount" ? "成交额(千元)" : "涨跌幅(%)");
+      subCtx.fillStyle = "#475569";
+      subCtx.font = mobile ? "10px sans-serif" : "11px sans-serif";
+      subCtx.fillText(subTitle, subPad.l + 4, subPad.t - 4);
+    }
+
+    function cycleScheduleDraw() {
+      if (cycleDrawRaf) return;
+      cycleDrawRaf = requestAnimationFrame(() => {
+        cycleDrawRaf = 0;
+        if (reportRenderMode !== "json") return;
+        drawCycleCanvas(currentReportData || {});
+      });
+    }
+
+    function cycleStopInertia() {
+      if (cycleInertiaRaf) cancelAnimationFrame(cycleInertiaRaf);
+      cycleInertiaRaf = 0;
+    }
+
+    function cycleStartInertia() {
+      const total = (currentReportData?.candles || []).length;
+      if (!total) return;
+      cycleStopInertia();
+      const step = () => {
+        if (Math.abs(cyclePanVelocity) < 0.01) {
+          cycleInertiaRaf = 0;
+          return;
+        }
+        cyclePanBy(cyclePanVelocity, total);
+        cyclePanVelocity *= 0.92;
+        cycleScheduleDraw();
+        cycleInertiaRaf = requestAnimationFrame(step);
+      };
+      cycleInertiaRaf = requestAnimationFrame(step);
+    }
+
+    function cycleIsFullscreenActive() {
+      return document.fullscreenElement === cycleChartPanel;
+    }
+
+    function cycleUpdateFullscreenBtn() {
+      if (!cycleFullscreenBtn) return;
+      cycleFullscreenBtn.textContent = cycleIsFullscreenActive() ? "退出全屏" : "全屏";
+    }
+
+    async function cycleLockLandscape() {
+      if (screen.orientation && screen.orientation.lock) {
+        try { await screen.orientation.lock("landscape"); } catch (_) {}
+      }
+    }
+
+    function cycleUnlockOrientation() {
+      if (screen.orientation && screen.orientation.unlock) {
+        try { screen.orientation.unlock(); } catch (_) {}
+      }
+    }
+
+    async function cycleEnterFullscreen() {
+      if (!cycleChartPanel || !cycleChartPanel.requestFullscreen) return;
+      try {
+        await cycleChartPanel.requestFullscreen();
+        await cycleLockLandscape();
+      } catch (_) {}
+      cycleUpdateFullscreenBtn();
+      cycleScheduleDraw();
+    }
+
+    async function cycleExitFullscreen() {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        try { await document.exitFullscreen(); } catch (_) {}
+      }
+      cycleUnlockOrientation();
+      cycleUpdateFullscreenBtn();
+      cycleScheduleDraw();
     }
 
     function renderCycleReportData(reportData, sourceText) {
@@ -1047,12 +1496,228 @@
       reportEmptyEl.classList.add("hidden");
       reportContentEl.classList.remove("hidden");
       showJsonPanel();
+      cycleResetView(reportData || {});
       renderCyclePanelSummary(reportData?.summary || null);
       renderCycleRows(reportData?.cycles || []);
-      drawCycleCanvas(reportData || {});
+      cycleScheduleDraw();
       const summary = reportData?.summary || {};
       reportMetaEl.textContent = `${sourceText || "JSON渲染"} | ${summary.stock_name || "-"} (${summary.ts_code || "-"}) | threshold=${summary.threshold || "-"} | min_gap=${summary.min_gap || "-"}`;
       updatePreviewMode("JSON图表渲染（HTML可导出）");
+    }
+
+    function bindCycleInteractions() {
+      if (!cycleMainCanvas || !cycleSubCanvas) return;
+      const redraw = () => cycleScheduleDraw();
+      const bindGestureEvents = (canvas) => {
+        canvas.addEventListener("touchstart", (e) => {
+          if (reportRenderMode !== "json") return;
+          const total = (currentReportData?.candles || []).length;
+          if (!total) return;
+          const rect = canvas.getBoundingClientRect();
+          cycleStopInertia();
+          if (e.touches.length === 2) {
+            cyclePinchDist = cycleTouchDistance(e.touches[0], e.touches[1]);
+            cyclePinchSpan = cycleView.right - cycleView.left;
+            cyclePinchAnchor = cycleIdxFromClientX((e.touches[0].clientX + e.touches[1].clientX) / 2, rect);
+            cyclePanLastX = null;
+            cyclePanLastTs = 0;
+          } else if (e.touches.length === 1) {
+            cyclePanLastX = e.touches[0].clientX;
+            cyclePanLastTs = performance.now();
+            cyclePanVelocity = 0;
+          }
+        }, { passive: true });
+
+        canvas.addEventListener("touchmove", (e) => {
+          if (reportRenderMode !== "json") return;
+          const total = (currentReportData?.candles || []).length;
+          if (!total) return;
+          if (e.touches.length === 2 && cyclePinchDist > 0) {
+            e.preventDefault();
+            const curDist = cycleTouchDistance(e.touches[0], e.touches[1]);
+            const scale = cyclePinchDist / Math.max(1, curDist);
+            const oldSpan = cycleView.right - cycleView.left;
+            const targetSpan = cyclePinchSpan * scale;
+            const ratio = (cyclePinchAnchor - cycleView.left) / Math.max(1e-6, oldSpan);
+            const newLeft = cyclePinchAnchor - ratio * targetSpan;
+            cycleSetView(newLeft, newLeft + targetSpan, total);
+            redraw();
+          } else if (e.touches.length === 1 && cyclePanLastX != null) {
+            e.preventDefault();
+            const x = e.touches[0].clientX;
+            const dx = x - cyclePanLastX;
+            cyclePanLastX = x;
+            const now = performance.now();
+            const dt = Math.max(1, now - cyclePanLastTs);
+            cyclePanLastTs = now;
+            const barsPerPx = (cycleView.right - cycleView.left) / Math.max(1, canvas.clientWidth);
+            const deltaIdx = -dx * barsPerPx;
+            cyclePanBy(deltaIdx, total);
+            cyclePanVelocity = (deltaIdx / dt) * 16;
+            redraw();
+          }
+        }, { passive: false });
+
+        canvas.addEventListener("touchend", (e) => {
+          if (!e.touches || e.touches.length < 2) cyclePinchDist = 0;
+          if (!e.touches || e.touches.length === 0) {
+            cyclePanLastX = null;
+            if (Math.abs(cyclePanVelocity) > 0.02) cycleStartInertia();
+          }
+        });
+
+        canvas.addEventListener("touchcancel", () => {
+          cyclePinchDist = 0;
+          cyclePanLastX = null;
+          cycleStartInertia();
+        });
+
+        canvas.addEventListener("gesturestart", (e) => {
+          if (reportRenderMode !== "json") return;
+          const rect = canvas.getBoundingClientRect();
+          e.preventDefault();
+          cycleGestureBaseSpan = cycleView.right - cycleView.left;
+          const cx = typeof e.clientX === "number" ? e.clientX : (rect.left + rect.width / 2);
+          cycleGestureAnchor = cycleIdxFromClientX(cx, rect);
+        }, { passive: false });
+
+        canvas.addEventListener("gesturechange", (e) => {
+          if (reportRenderMode !== "json") return;
+          const total = (currentReportData?.candles || []).length;
+          if (!total) return;
+          e.preventDefault();
+          if (!cycleGestureBaseSpan) return;
+          const oldSpan = cycleView.right - cycleView.left;
+          const scale = Math.max(0.2, Number(e.scale) || 1);
+          const targetSpan = cycleGestureBaseSpan / scale;
+          const ratio = (cycleGestureAnchor - cycleView.left) / Math.max(1e-6, oldSpan);
+          const newLeft = cycleGestureAnchor - ratio * targetSpan;
+          cycleSetView(newLeft, newLeft + targetSpan, total);
+          redraw();
+        }, { passive: false });
+
+        canvas.addEventListener("gestureend", () => {
+          cycleGestureBaseSpan = 0;
+        });
+
+        canvas.addEventListener("wheel", (e) => {
+          if (reportRenderMode !== "json") return;
+          const total = (currentReportData?.candles || []).length;
+          if (!total) return;
+          e.preventDefault();
+          const rect = canvas.getBoundingClientRect();
+          const absX = Math.abs(e.deltaX);
+          const absY = Math.abs(e.deltaY);
+          const barsPerPx = (cycleView.right - cycleView.left) / Math.max(1, canvas.clientWidth);
+          const wantsZoom = e.ctrlKey || e.altKey || e.metaKey;
+          if (wantsZoom && absY > 0) {
+            const factor = e.deltaY < 0 ? 0.9 : 1.1;
+            cycleZoomAt(factor, cycleIdxFromClientX(e.clientX, rect), total);
+            redraw();
+            return;
+          }
+          const panPx = absX >= absY ? e.deltaX : e.deltaY;
+          if (Math.abs(panPx) > 0) {
+            cyclePanBy(panPx * barsPerPx, total);
+            redraw();
+          }
+        }, { passive: false });
+
+        canvas.addEventListener("mousedown", (e) => {
+          if (reportRenderMode !== "json") return;
+          if (e.button !== 0) return;
+          cycleStopInertia();
+          cycleDragActive = true;
+          cycleDragStartX = e.clientX;
+          cycleDragStartLeft = cycleView.left;
+          cycleDragStartRight = cycleView.right;
+        });
+      };
+
+      bindGestureEvents(cycleMainCanvas);
+      bindGestureEvents(cycleSubCanvas);
+
+      cycleZoomInBtn.addEventListener("click", () => {
+        const total = (currentReportData?.candles || []).length;
+        if (!total) return;
+        cycleZoomAt(0.8, (cycleView.left + cycleView.right) / 2, total);
+        redraw();
+      });
+
+      cycleZoomOutBtn.addEventListener("click", () => {
+        const total = (currentReportData?.candles || []).length;
+        if (!total) return;
+        cycleZoomAt(1.25, (cycleView.left + cycleView.right) / 2, total);
+        redraw();
+      });
+
+      cycleZoomResetBtn.addEventListener("click", () => {
+        cycleResetView(currentReportData || {});
+        redraw();
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!cycleDragActive) return;
+        const total = (currentReportData?.candles || []).length;
+        if (!total) return;
+        const rect = cycleMainCanvas.getBoundingClientRect();
+        const span = cycleDragStartRight - cycleDragStartLeft;
+        const deltaIdx = ((e.clientX - cycleDragStartX) / Math.max(1, rect.width)) * span;
+        cycleSetView(cycleDragStartLeft - deltaIdx, cycleDragStartRight - deltaIdx, total);
+        redraw();
+      });
+
+      window.addEventListener("mouseup", () => {
+        cycleDragActive = false;
+      });
+
+      cycleSubVolBtn.addEventListener("click", () => {
+        cycleSubMode = "vol";
+        cycleSubVolBtn.classList.add("active");
+        cycleSubAmountBtn.classList.remove("active");
+        cycleSubPctBtn.classList.remove("active");
+        redraw();
+      });
+      cycleSubAmountBtn.addEventListener("click", () => {
+        cycleSubMode = "amount";
+        cycleSubVolBtn.classList.remove("active");
+        cycleSubAmountBtn.classList.add("active");
+        cycleSubPctBtn.classList.remove("active");
+        redraw();
+      });
+      cycleSubPctBtn.addEventListener("click", () => {
+        cycleSubMode = "pct";
+        cycleSubVolBtn.classList.remove("active");
+        cycleSubAmountBtn.classList.remove("active");
+        cycleSubPctBtn.classList.add("active");
+        redraw();
+      });
+
+      cycleMainCanvas.addEventListener("dblclick", () => {
+        cycleResetView(currentReportData || {});
+        redraw();
+      });
+
+      cycleFullscreenBtn.addEventListener("click", async () => {
+        if (cycleIsFullscreenActive()) {
+          await cycleExitFullscreen();
+        } else {
+          await cycleEnterFullscreen();
+        }
+      });
+
+      window.addEventListener("resize", redraw);
+      window.addEventListener("orientationchange", () => setTimeout(redraw, 120));
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(redraw);
+        ro.observe(cycleChartWrap);
+      }
+      document.addEventListener("fullscreenchange", () => {
+        cycleUpdateFullscreenBtn();
+        if (!cycleIsFullscreenActive()) cycleUnlockOrientation();
+        redraw();
+      });
+      cycleUpdateFullscreenBtn();
     }
 
     function showHtmlPreview(htmlUrl, modeText) {
@@ -1137,9 +1802,9 @@
         return;
       }
       box.innerHTML = items.map((item) => `
-        <div class="suggest-item" data-name="${escHtml(item.name)}" data-code="${escHtml(item.ts_code)}">
+        <div class="suggest-item" data-name="${escHtml(item.name)}" data-code="${escHtml(item.ts_code)}" data-asset-type="${escHtml(item.asset_type || "")}">
           ${escHtml(item.name)}
-          <span class="muted">${escHtml(item.ts_code)}</span>
+          <span class="muted">${escHtml(item.ts_code)} ${escHtml(item.asset_type === "H" ? "港股" : (item.asset_type === "F" ? "基金" : "A股"))}</span>
         </div>
       `).join("");
       box.classList.add("show");
@@ -1149,6 +1814,8 @@
         el.addEventListener("mousedown", (event) => {
           event.preventDefault();
           input.value = el.dataset.name || input.value;
+          input.dataset.suggestCode = el.dataset.code || "";
+          input.dataset.suggestAssetType = (el.dataset.assetType || "").toUpperCase();
           hideSuggestBox(box);
         });
       });
@@ -1157,6 +1824,8 @@
     function bindSuggestInput(input, box, assetType) {
       let reqToken = 0;
       input.addEventListener("input", () => {
+        input.dataset.suggestCode = "";
+        input.dataset.suggestAssetType = "";
         clearTimeout(suggestTimer);
         suggestTimer = setTimeout(async () => {
           const q = input.value.trim();
@@ -1225,12 +1894,15 @@
       setSingleStatus("生成中...", "muted");
       openBtn.disabled = true;
       try {
+        const selectedType = (nameInput.dataset.suggestAssetType || "E").toUpperCase();
+        const safeType = selectedType === "H" ? "H" : "E";
+        const reportTitle = safeType === "H" ? "港股周期报告" : "A股周期报告";
         const body = {
           name: getVal("name").trim(),
           threshold: toNum("threshold"),
           min_gap: toNum("minGap"),
           lookback_days: toNum("lookback"),
-          asset_type: "E",
+          asset_type: safeType,
           output_format: "both",
           template_version: "cycle_v1",
         };
@@ -1262,7 +1934,7 @@
           try {
             const reportData = await loadReportData(finalData.json_url);
             if (reportData) {
-              renderCycleReportData(reportData, "A股周期报告");
+              renderCycleReportData(reportData, reportTitle);
               rendered = true;
             }
           } catch (_) {
@@ -1272,7 +1944,7 @@
         currentHtmlUrl = finalData.html_url || "";
         openBtn.disabled = !currentHtmlUrl;
         if (!rendered && currentHtmlUrl) {
-          showHtmlPreview(currentHtmlUrl, "A股周期报告（HTML预览）");
+          showHtmlPreview(currentHtmlUrl, `${reportTitle}（HTML预览）`);
         }
         renderSummary(finalData.summary);
         setSingleStatus("生成成功", "ok");
@@ -2071,7 +2743,8 @@
 
     switchTab("single");
     clearCycleReportView();
-    bindSuggestInput(nameInput, nameSuggestEl, "E");
+    bindCycleInteractions();
+    bindSuggestInput(nameInput, nameSuggestEl, "S");
     bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
     document.addEventListener("click", (event) => {
       if (!event.target.closest(".suggest-wrap")) {
