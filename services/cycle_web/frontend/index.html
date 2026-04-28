@@ -472,6 +472,11 @@
       gap: 8px;
       flex-wrap: wrap;
     }
+    .cycle-tools button.active {
+      border-color: #2563eb;
+      color: #2563eb;
+      background: #eff6ff;
+    }
     .cycle-hint {
       margin-top: 6px;
       color: #64748b;
@@ -1259,6 +1264,7 @@
                 <button id="cycleZoomOut" class="secondary" type="button">缩小</button>
                 <button id="cycleZoomReset" class="secondary" type="button">重置</button>
                 <button id="cycleFullscreen" class="secondary" type="button">全屏</button>
+                <button id="cycleStructToggle" class="secondary active" type="button">周期线点：开</button>
               </div>
               <div class="cycle-hint">触控板双指滑动=平移；双指捏合或 Alt/Ctrl+滚轮=缩放。</div>
             </div>
@@ -1435,6 +1441,7 @@
     const cycleZoomOutBtn = document.getElementById("cycleZoomOut");
     const cycleZoomResetBtn = document.getElementById("cycleZoomReset");
     const cycleFullscreenBtn = document.getElementById("cycleFullscreen");
+    const cycleStructToggleBtn = document.getElementById("cycleStructToggle");
     const viewer = document.getElementById("viewer");
     const iframeWrap = document.getElementById("iframeWrap");
     let uptrendItems = [];
@@ -1464,6 +1471,7 @@
     let cycleInertiaRaf = 0;
     let cycleDrawRaf = 0;
     let cycleSubMode = "vol";
+    let cycleStructureVisible = true;
     let cycleSelectedIdx = null;
     let hoverTradeDate = "";
     let lockedTradeDate = "";
@@ -1876,6 +1884,21 @@
       if (!total) return;
       const rawIdx = Math.round(cycleIdxFromClientX(clientX, rect));
       cycleSelectedIdx = Math.max(0, Math.min(total - 1, rawIdx));
+      cycleScheduleDraw();
+    }
+
+    function cycleUpdateStructureToggleBtn() {
+      if (!cycleStructToggleBtn) return;
+      cycleStructToggleBtn.classList.toggle("active", cycleStructureVisible);
+      cycleStructToggleBtn.textContent = cycleStructureVisible ? "周期线点：开" : "周期线点：关";
+    }
+
+    function cycleSetStructureVisible(visible) {
+      cycleStructureVisible = Boolean(visible);
+      cycleUpdateStructureToggleBtn();
+      if (!cycleStructureVisible && cycleStructOverlay) {
+        cycleStructOverlay.innerHTML = "";
+      }
       cycleScheduleDraw();
     }
 
@@ -2997,6 +3020,7 @@
     function cycleRenderStructureOverlay(reportData) {
       if (!cycleStructOverlay) return;
       cycleStructOverlay.innerHTML = "";
+      if (!cycleStructureVisible) return;
       if (!lwMainChart || !lwCandleSeries) return;
       const pivots = Array.isArray(reportData?.pivots) ? reportData.pivots : [];
       const cycles = Array.isArray(reportData?.cycles) ? reportData.cycles : [];
@@ -3424,6 +3448,11 @@
           cycleScheduleDraw();
         }
       });
+      if (cycleStructToggleBtn) {
+        cycleStructToggleBtn.addEventListener("click", () => {
+          cycleSetStructureVisible(!cycleStructureVisible);
+        });
+      }
 
       cycleSubVolBtn.addEventListener("click", () => { cycleSetSubMode("vol"); redraw(); });
       cycleSubAmountBtn.addEventListener("click", () => { cycleSetSubMode("amount"); redraw(); });
@@ -4878,6 +4907,7 @@
     switchTab("single");
     clearCycleReportView();
     bindCycleInteractions();
+    cycleUpdateStructureToggleBtn();
     bindSuggestInput(nameInput, nameSuggestEl, "S");
     bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
     bindEventAssetSuggestInput();
