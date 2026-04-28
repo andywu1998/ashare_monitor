@@ -263,8 +263,8 @@
       border-radius: 8px;
       overflow: hidden;
     }
-    #cycleMainCanvas,
-    #cycleSubCanvas {
+    #cycleMainChart,
+    #cycleSubChart {
       width: 100%;
       height: 100%;
       display: block;
@@ -1102,11 +1102,11 @@
             <div id="cycleChartPanel" class="chart-card" style="margin-top:8px">
               <div id="cycleChartWrap" class="cycle-chart-wrap">
                 <div class="cycle-main-pane">
-                  <canvas id="cycleMainCanvas"></canvas>
+                  <div id="cycleMainChart"></div>
                   <div id="cycleEventOverlay" class="cycle-event-overlay"></div>
                 </div>
                 <div class="cycle-sub-pane">
-                  <canvas id="cycleSubCanvas"></canvas>
+                  <div id="cycleSubChart"></div>
                 </div>
               </div>
               <div class="cycle-sub-switch">
@@ -1194,6 +1194,7 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   <script>
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
     const panelSingle = document.getElementById("panelSingle");
@@ -1253,9 +1254,9 @@
     const cycleDayInfoEl = document.getElementById("cycleDayInfo");
     const cycleChartPanel = document.getElementById("cycleChartPanel");
     const cycleChartWrap = document.getElementById("cycleChartWrap");
-    const cycleMainCanvas = document.getElementById("cycleMainCanvas");
+    const cycleMainCanvas = document.getElementById("cycleMainChart");
     const cycleEventOverlay = document.getElementById("cycleEventOverlay");
-    const cycleSubCanvas = document.getElementById("cycleSubCanvas");
+    const cycleSubCanvas = document.getElementById("cycleSubChart");
     const cycleSubVolBtn = document.getElementById("cycleSubVol");
     const cycleSubAmountBtn = document.getElementById("cycleSubAmount");
     const cycleSubPctBtn = document.getElementById("cycleSubPct");
@@ -1318,6 +1319,17 @@
     let cycleDrawRaf = 0;
     let cycleSubMode = "vol";
     let cycleSelectedIdx = null;
+    let lwMainChart = null;
+    let lwSubChart = null;
+    let lwCandleSeries = null;
+    let lwSubSeries = null;
+    let lwSeriesMarkers = null;
+    let lwCandleRows = [];
+    let lwDateToIdx = new Map();
+    let lwRenderBound = false;
+    let lwSyncingRange = false;
+    let lwLastDataStamp = "";
+    let lwUnavailableWarned = false;
     let currentTsCode = "";
     let currentAssetType = "E";
     let eventItems = [];
@@ -2514,6 +2526,472 @@
       window.addEventListener("orientationchange", () => setTimeout(redraw, 120));
       if (window.ResizeObserver) {
         const ro = new ResizeObserver(redraw);
+        ro.observe(cycleChartWrap);
+      }
+      document.addEventListener("fullscreenchange", () => {
+        cycleUpdateFullscreenBtn();
+        if (!cycleIsFullscreenActive()) cycleUnlockOrientation();
+        redraw();
+      });
+      cycleUpdateFullscreenBtn();
+    }
+
+    function cycleTimeToDateText(time) {
+      if (!time) return "";
+      if (typeof time === "string") return time;
+      if (typeof time === "number" && Number.isFinite(time)) {
+        return new Date(time * 1000).toISOString().slice(0, 10);
+      }
+      if (typeof time === "object" && time.year && time.month && time.day) {
+        const y = String(time.year);
+        const m = String(time.month).padStart(2, "0");
+        const d = String(time.day).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      return String(time).slice(0, 10);
+    }
+
+    function cycleGetSubMeta(mode) {
+      const m = mode || "vol";
+      if (m === "amount") {
+        return { title: "成交额", color: "#64748b", kind: "amount" };
+      }
+      if (m === "pct") {
+        return { title: "涨跌幅(%)", color: "#2563eb", kind: "pct" };
+      }
+      if (m === "mainNet") {
+        return { title: "主力净流入", color: "#0ea5e9", kind: "net", key: "net_mf_amount" };
+      }
+      if (m === "elgNet") {
+        return { title: "超大单净流入", color: "#0284c7", kind: "net", buyKey: "buy_elg_amount", sellKey: "sell_elg_amount" };
+      }
+      if (m === "lgNet") {
+        return { title: "大单净流入", color: "#0f766e", kind: "net", buyKey: "buy_lg_amount", sellKey: "sell_lg_amount" };
+      }
+      if (m === "mdNet") {
+        return { title: "中单净流入", color: "#7c3aed", kind: "net", buyKey: "buy_md_amount", sellKey: "sell_md_amount" };
+      }
+      if (m === "smNet") {
+        return { title: "小单净流入", color: "#0891b2", kind: "net", buyKey: "buy_sm_amount", sellKey: "sell_sm_amount" };
+      }
+      return { title: "成交量(手)", color: "#64748b", kind: "vol" };
+    }
+
+    function cycleBuildSubSeriesData(candles, mode) {
+      const meta = cycleGetSubMeta(mode);
+      return (candles || []).map((c) => {
+        const open = Number(c.open ?? c.close ?? 0);
+        const close = Number(c.close ?? open);
+        const upColor = "rgba(220,38,38,0.85)";
+        const downColor = "rgba(5,150,105,0.85)";
+        let value = 0;
+        if (meta.kind === "vol") {
+          value = Number(c.vol ?? 0);
+        } else if (meta.kind === "amount") {
+          value = Number(c.amount ?? 0);
+        } else if (meta.kind === "pct") {
+          value = Number(c.pct_chg ?? 0);
+        } else if (meta.kind === "net") {
+          if (meta.key) {
+            value = Number(c[meta.key] ?? 0);
+          } else {
+            const buy = Number(c[meta.buyKey] ?? 0);
+            const sell = Number(c[meta.sellKey] ?? 0);
+            value = buy - sell;
+          }
+        }
+        return {
+          time: String(c.trade_date || ""),
+          value: Number.isFinite(value) ? value : 0,
+          color: close >= open ? upColor : downColor,
+        };
+      });
+    }
+
+    function cycleEnsureLightweightCharts() {
+      const LW = window.LightweightCharts;
+      if (!cycleMainCanvas || !cycleSubCanvas) return false;
+      if (!LW || typeof LW.createChart !== "function") {
+        if (!lwUnavailableWarned && cycleDayInfoEl) {
+          cycleDayInfoEl.textContent = "Lightweight Charts 加载失败，请检查网络后刷新页面。";
+          lwUnavailableWarned = true;
+        }
+        return false;
+      }
+      if (lwMainChart && lwSubChart && lwCandleSeries && lwSubSeries) return true;
+
+      const mainW = Math.max(280, cycleMainCanvas.clientWidth || 280);
+      const mainH = Math.max(220, cycleMainCanvas.clientHeight || 220);
+      const subW = Math.max(280, cycleSubCanvas.clientWidth || 280);
+      const subH = Math.max(100, cycleSubCanvas.clientHeight || 100);
+      const baseLayout = {
+        layout: { background: { color: "#ffffff" }, textColor: "#475569" },
+        grid: {
+          vertLines: { color: "#f1f5f9" },
+          horzLines: { color: "#e2e8f0" },
+        },
+        localization: { locale: "zh-CN" },
+        crosshair: { mode: 0 },
+      };
+
+      lwMainChart = LW.createChart(cycleMainCanvas, {
+        ...baseLayout,
+        width: mainW,
+        height: mainH,
+        rightPriceScale: { borderColor: "#e2e8f0", scaleMargins: { top: 0.08, bottom: 0.06 } },
+        timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false, rightOffset: 2, barSpacing: 11 },
+      });
+      lwSubChart = LW.createChart(cycleSubCanvas, {
+        ...baseLayout,
+        width: subW,
+        height: subH,
+        rightPriceScale: { borderColor: "#e2e8f0", scaleMargins: { top: 0.14, bottom: 0.12 } },
+        timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false, rightOffset: 2, barSpacing: 11 },
+      });
+
+      const candleOpts = {
+        upColor: "#dc2626",
+        downColor: "#059669",
+        borderUpColor: "#dc2626",
+        borderDownColor: "#059669",
+        wickUpColor: "#dc2626",
+        wickDownColor: "#059669",
+      };
+      if (typeof lwMainChart.addSeries === "function" && LW.CandlestickSeries) {
+        lwCandleSeries = lwMainChart.addSeries(LW.CandlestickSeries, candleOpts);
+      } else if (typeof lwMainChart.addCandlestickSeries === "function") {
+        lwCandleSeries = lwMainChart.addCandlestickSeries(candleOpts);
+      }
+
+      const subOpts = { color: "#64748b", priceLineVisible: false };
+      if (typeof lwSubChart.addSeries === "function" && LW.HistogramSeries) {
+        lwSubSeries = lwSubChart.addSeries(LW.HistogramSeries, subOpts);
+      } else if (typeof lwSubChart.addHistogramSeries === "function") {
+        lwSubSeries = lwSubChart.addHistogramSeries(subOpts);
+      }
+      if (!lwCandleSeries || !lwSubSeries) return false;
+
+      lwMainChart.subscribeCrosshairMove((param) => {
+        const dateText = cycleTimeToDateText(param?.time);
+        const idx = lwDateToIdx.get(dateText);
+        if (idx === undefined) return;
+        cycleSelectedIdx = idx;
+        const row = lwCandleRows[idx];
+        if (!row) return;
+        cycleSetDayInfoText(
+          row.trade_date,
+          row.open,
+          row.close,
+          row.pct_chg,
+          row.net_mf_amount
+        );
+      });
+
+      lwMainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (lwSyncingRange) return;
+        lwSyncingRange = true;
+        try {
+          lwSubChart.timeScale().setVisibleLogicalRange(range);
+          cycleRenderEventMarkersLightweight();
+        } catch (_) {
+          // no-op
+        }
+        lwSyncingRange = false;
+      });
+      lwSubChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (lwSyncingRange) return;
+        lwSyncingRange = true;
+        try {
+          lwMainChart.timeScale().setVisibleLogicalRange(range);
+          cycleRenderEventMarkersLightweight();
+        } catch (_) {
+          // no-op
+        }
+        lwSyncingRange = false;
+      });
+
+      return true;
+    }
+
+    function cycleRenderEventMarkersLightweight() {
+      if (!cycleEventOverlay) return;
+      cycleEventOverlay.innerHTML = "";
+      if (!lwMainChart || !lwCandleSeries || !Array.isArray(eventItems) || !eventItems.length) return;
+      const cssW = Math.max(280, cycleMainCanvas.clientWidth || 0);
+      const cssH = Math.max(120, cycleMainCanvas.clientHeight || 0);
+      const logicalRange = lwMainChart.timeScale().getVisibleLogicalRange?.() || null;
+      const leftLogical = logicalRange ? Math.floor(logicalRange.from) - 1 : -1e9;
+      const rightLogical = logicalRange ? Math.ceil(logicalRange.to) + 1 : 1e9;
+
+      const visible = eventItems
+        .map((item) => {
+          const d = String(item.trade_date || "");
+          const idx = lwDateToIdx.get(d);
+          if (idx === undefined || idx < leftLogical || idx > rightLogical) return null;
+          const x = lwMainChart.timeScale().timeToCoordinate?.(d);
+          if (x === null || x === undefined || !Number.isFinite(x)) return null;
+          const row = lwCandleRows[idx];
+          if (!row) return null;
+          const y = lwCandleSeries.priceToCoordinate?.(Number(row.high ?? row.close ?? 0));
+          if (y === null || y === undefined || !Number.isFinite(y)) return null;
+          return { ...item, __x: Number(x), __y: Number(y), __idx: idx };
+        })
+        .filter(Boolean);
+      if (!visible.length) return;
+
+      const laneUsed = [];
+      const maxLanes = window.innerWidth <= 760 ? 2 : 4;
+      const laneStep = window.innerWidth <= 760 ? 20 : 24;
+      const topBase = 8;
+
+      visible.forEach((item) => {
+        const leftPxRaw = Number(item.__x);
+        const leftPx = Math.max(2, Math.min(cssW - 80, leftPxRaw - 56));
+        let lane = 0;
+        while (lane < maxLanes) {
+          const arr = laneUsed[lane] || [];
+          const overlap = arr.some((x) => Math.abs(x - leftPx) < 110);
+          if (!overlap) break;
+          lane += 1;
+        }
+        if (lane >= maxLanes) lane = maxLanes - 1;
+        if (!laneUsed[lane]) laneUsed[lane] = [];
+        laneUsed[lane].push(leftPx);
+        const topPx = topBase + lane * laneStep;
+
+        const mini = document.createElement("button");
+        mini.type = "button";
+        mini.className = `cycle-event-mini ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+        mini.textContent = item.title ? (item.title.length > 10 ? `${item.title.slice(0, 10)}...` : item.title) : "(无标题)";
+        mini.style.left = `${leftPx}px`;
+        mini.style.top = `${Math.min(cssH - 26, topPx)}px`;
+        mini.dataset.eventUuid = item.event_uuid || "";
+        mini.title = `${item.global_event ? "全局事件 | " : ""}${item.title || ""}`;
+        cycleEventOverlay.appendChild(mini);
+
+        const miniW = mini.offsetWidth || 96;
+        const miniH = mini.offsetHeight || 24;
+        const startX = leftPx + miniW / 2;
+        const startY = Math.min(cssH - 26, topPx) + miniH;
+        const targetX = Math.max(6, Math.min(cssW - 6, leftPxRaw));
+        const targetY = Math.max(8, Math.min(cssH - 6, Number(item.__y) - 6));
+        const dx = targetX - startX;
+        const dy = targetY - startY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 3) {
+          const link = document.createElement("div");
+          link.className = `cycle-event-link ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+          link.style.left = `${startX}px`;
+          link.style.top = `${startY}px`;
+          link.style.width = `${dist}px`;
+          link.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+          cycleEventOverlay.insertBefore(link, mini);
+        }
+        const anchor = document.createElement("div");
+        anchor.className = `cycle-event-anchor ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+        anchor.style.left = `${targetX}px`;
+        anchor.style.top = `${targetY}px`;
+        cycleEventOverlay.insertBefore(anchor, mini);
+
+        mini.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const uuid = mini.dataset.eventUuid || "";
+          activeEventUuid = uuid;
+          const hit = eventItems.find((x) => x.event_uuid === uuid) || null;
+          renderEventList(eventItems);
+          renderEventDetail(hit);
+          cycleScheduleDraw();
+        });
+      });
+    }
+
+    function cycleApplySubModeToLightweight(candles) {
+      if (!lwSubSeries || !lwSubChart) return;
+      const meta = cycleGetSubMeta(cycleSubMode);
+      const data = cycleBuildSubSeriesData(candles, cycleSubMode);
+      lwSubSeries.applyOptions({ color: meta.color });
+      if (meta.kind === "pct") {
+        lwSubSeries.applyOptions({
+          priceFormat: {
+            type: "custom",
+            minMove: 0.01,
+            formatter: (v) => `${Number(v || 0).toFixed(2)}%`,
+          },
+        });
+      } else if (meta.kind === "net") {
+        lwSubSeries.applyOptions({
+          priceFormat: {
+            type: "custom",
+            minMove: 1,
+            formatter: (v) => cycleFormatMoneyWanTick(Number(v || 0)),
+          },
+        });
+      } else if (meta.kind === "amount") {
+        lwSubSeries.applyOptions({
+          priceFormat: {
+            type: "custom",
+            minMove: 1,
+            formatter: (v) => cycleFormatLarge(Number(v || 0)),
+          },
+        });
+      } else {
+        lwSubSeries.applyOptions({
+          priceFormat: {
+            type: "custom",
+            minMove: 1,
+            formatter: (v) => cycleFormatLarge(Number(v || 0)),
+          },
+        });
+      }
+      lwSubSeries.setData(data);
+    }
+
+    function drawCycleCanvas(reportData) {
+      if (!cycleEnsureLightweightCharts()) return;
+      const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
+      if (!candles.length) {
+        if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
+        lwCandleRows = [];
+        lwDateToIdx = new Map();
+        lwLastDataStamp = "";
+        lwCandleSeries.setData([]);
+        lwSubSeries.setData([]);
+        return;
+      }
+
+      lwCandleRows = candles;
+      lwDateToIdx = new Map();
+      candles.forEach((c, idx) => lwDateToIdx.set(String(c.trade_date || ""), idx));
+      const candleData = candles.map((c) => ({
+        time: String(c.trade_date || ""),
+        open: Number(c.open ?? c.close ?? 0),
+        high: Number(c.high ?? c.close ?? 0),
+        low: Number(c.low ?? c.close ?? 0),
+        close: Number(c.close ?? c.open ?? 0),
+      }));
+      const newStamp = `${String(reportData?.ts_code || "")}|${candles.length}|${String(candles[0]?.trade_date || "")}|${String(candles[candles.length - 1]?.trade_date || "")}`;
+      const shouldFit = newStamp !== lwLastDataStamp;
+      lwCandleSeries.setData(candleData);
+      cycleApplySubModeToLightweight(candles);
+
+      const LW = window.LightweightCharts;
+      const markers = (eventItems || [])
+        .filter((item) => lwDateToIdx.has(String(item.trade_date || "")))
+        .map((item) => ({
+          time: String(item.trade_date || ""),
+          position: "aboveBar",
+          color: item.global_event ? "#2563eb" : "#94a3b8",
+          shape: "circle",
+          text: item.title ? String(item.title).slice(0, 10) : "",
+        }));
+      if (LW?.createSeriesMarkers) {
+        if (lwSeriesMarkers && typeof lwSeriesMarkers.setMarkers === "function") {
+          lwSeriesMarkers.setMarkers(markers);
+        } else {
+          lwSeriesMarkers = LW.createSeriesMarkers(lwCandleSeries, markers);
+        }
+      } else if (typeof lwCandleSeries.setMarkers === "function") {
+        lwCandleSeries.setMarkers(markers);
+      }
+
+      if (shouldFit) {
+        lwMainChart.timeScale().fitContent();
+        lwSubChart.timeScale().fitContent();
+        lwLastDataStamp = newStamp;
+      }
+      const latest = candles[candles.length - 1];
+      if (latest) {
+        cycleSelectedIdx = candles.length - 1;
+        cycleSetDayInfoText(
+          latest.trade_date,
+          latest.open,
+          latest.close,
+          latest.pct_chg,
+          latest.net_mf_amount
+        );
+      }
+      cycleRenderEventMarkersLightweight();
+    }
+
+    function cycleScheduleDraw() {
+      if (cycleDrawRaf) return;
+      cycleDrawRaf = requestAnimationFrame(() => {
+        cycleDrawRaf = 0;
+        if (reportRenderMode !== "json") return;
+        drawCycleCanvas(currentReportData || {});
+      });
+    }
+
+    function bindCycleInteractions() {
+      if (lwRenderBound) return;
+      lwRenderBound = true;
+      const redraw = () => cycleScheduleDraw();
+
+      cycleZoomInBtn.addEventListener("click", () => {
+        if (!lwMainChart) return;
+        const ts = lwMainChart.timeScale();
+        const range = ts.getVisibleLogicalRange?.();
+        if (!range) return;
+        const center = (range.from + range.to) / 2;
+        const span = Math.max(8, (range.to - range.from) * 0.8);
+        ts.setVisibleLogicalRange({ from: center - span / 2, to: center + span / 2 });
+      });
+
+      cycleZoomOutBtn.addEventListener("click", () => {
+        if (!lwMainChart) return;
+        const ts = lwMainChart.timeScale();
+        const range = ts.getVisibleLogicalRange?.();
+        if (!range) return;
+        const center = (range.from + range.to) / 2;
+        const span = Math.max(12, (range.to - range.from) * 1.25);
+        ts.setVisibleLogicalRange({ from: center - span / 2, to: center + span / 2 });
+      });
+
+      cycleZoomResetBtn.addEventListener("click", () => {
+        if (lwMainChart && lwSubChart) {
+          lwMainChart.timeScale().fitContent();
+          lwSubChart.timeScale().fitContent();
+          cycleScheduleDraw();
+        }
+      });
+
+      cycleSubVolBtn.addEventListener("click", () => { cycleSetSubMode("vol"); redraw(); });
+      cycleSubAmountBtn.addEventListener("click", () => { cycleSetSubMode("amount"); redraw(); });
+      cycleSubPctBtn.addEventListener("click", () => { cycleSetSubMode("pct"); redraw(); });
+      if (cycleSubMainNetBtn) cycleSubMainNetBtn.addEventListener("click", () => { cycleSetSubMode("mainNet"); redraw(); });
+      if (cycleSubElgNetBtn) cycleSubElgNetBtn.addEventListener("click", () => { cycleSetSubMode("elgNet"); redraw(); });
+      if (cycleSubLgNetBtn) cycleSubLgNetBtn.addEventListener("click", () => { cycleSetSubMode("lgNet"); redraw(); });
+      if (cycleSubMdNetBtn) cycleSubMdNetBtn.addEventListener("click", () => { cycleSetSubMode("mdNet"); redraw(); });
+      if (cycleSubSmNetBtn) cycleSubSmNetBtn.addEventListener("click", () => { cycleSetSubMode("smNet"); redraw(); });
+
+      cycleFullscreenBtn.addEventListener("click", async () => {
+        if (cycleIsFullscreenActive()) {
+          await cycleExitFullscreen();
+        } else {
+          await cycleEnterFullscreen();
+        }
+      });
+
+      window.addEventListener("resize", () => {
+        if (lwMainChart) {
+          lwMainChart.resize(Math.max(280, cycleMainCanvas.clientWidth), Math.max(220, cycleMainCanvas.clientHeight));
+        }
+        if (lwSubChart) {
+          lwSubChart.resize(Math.max(280, cycleSubCanvas.clientWidth), Math.max(100, cycleSubCanvas.clientHeight));
+        }
+        redraw();
+      });
+      window.addEventListener("orientationchange", () => setTimeout(redraw, 120));
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+          if (lwMainChart) {
+            lwMainChart.resize(Math.max(280, cycleMainCanvas.clientWidth), Math.max(220, cycleMainCanvas.clientHeight));
+          }
+          if (lwSubChart) {
+            lwSubChart.resize(Math.max(280, cycleSubCanvas.clientWidth), Math.max(100, cycleSubCanvas.clientHeight));
+          }
+          redraw();
+        });
         ro.observe(cycleChartWrap);
       }
       document.addEventListener("fullscreenchange", () => {
