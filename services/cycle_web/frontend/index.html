@@ -276,6 +276,29 @@
       pointer-events: none;
       z-index: 8;
     }
+    .cycle-lock-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 7;
+    }
+    .cycle-lock-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 0;
+      border-left: 1px dashed rgba(37, 99, 235, 0.9);
+    }
+    .cycle-lock-dot {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2563eb;
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 1px 4px rgba(37, 99, 235, 0.32);
+      transform: translate(-50%, -50%);
+    }
     .cycle-struct-overlay {
       position: absolute;
       inset: 0;
@@ -454,6 +477,36 @@
       color: #64748b;
       font-size: 12px;
       line-height: 1.4;
+    }
+    .cycle-date-toolbar {
+      margin-top: 8px;
+      margin-bottom: 6px;
+      padding: 8px 10px;
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background: #f8fbff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .cycle-date-target {
+      color: #1e3a8a;
+      font-size: 12px;
+      line-height: 1.4;
+      font-weight: 600;
+    }
+    .cycle-date-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .cycle-date-actions button {
+      padding: 5px 10px;
+      font-size: 12px;
+      border-radius: 999px;
     }
     .cycle-day-info {
       margin-top: 8px;
@@ -1173,10 +1226,18 @@
               </div>
             </div>
             <div id="cycleChartPanel" class="chart-card" style="margin-top:8px">
+              <div class="cycle-date-toolbar">
+                <div id="cycleEventTarget" class="cycle-date-target">事件日期：-</div>
+                <div class="cycle-date-actions">
+                  <button id="cycleClearLockBtn" class="secondary" type="button">清除锁定</button>
+                  <button id="cycleUseLatestBtn" class="secondary" type="button">使用最新交易日</button>
+                </div>
+              </div>
               <div id="cycleChartWrap" class="cycle-chart-wrap">
                 <div class="cycle-main-pane">
                   <div id="cycleMainChart"></div>
                   <div id="cycleStructOverlay" class="cycle-struct-overlay"></div>
+                  <div id="cycleLockOverlay" class="cycle-lock-overlay"></div>
                   <div id="cycleEventOverlay" class="cycle-event-overlay"></div>
                 </div>
                 <div class="cycle-sub-pane">
@@ -1330,11 +1391,15 @@
     const reportContentEl = document.getElementById("reportContent");
     const reportMetaEl = document.getElementById("reportMeta");
     const reportSummaryEl = document.getElementById("reportSummary");
+    const cycleEventTargetEl = document.getElementById("cycleEventTarget");
+    const cycleClearLockBtn = document.getElementById("cycleClearLockBtn");
+    const cycleUseLatestBtn = document.getElementById("cycleUseLatestBtn");
     const cycleDayInfoEl = document.getElementById("cycleDayInfo");
     const cycleChartPanel = document.getElementById("cycleChartPanel");
     const cycleChartWrap = document.getElementById("cycleChartWrap");
     const cycleMainCanvas = document.getElementById("cycleMainChart");
     const cycleStructOverlay = document.getElementById("cycleStructOverlay");
+    const cycleLockOverlay = document.getElementById("cycleLockOverlay");
     const cycleEventOverlay = document.getElementById("cycleEventOverlay");
     const cycleSubCanvas = document.getElementById("cycleSubChart");
     const cycleSubVolBtn = document.getElementById("cycleSubVol");
@@ -1400,6 +1465,8 @@
     let cycleDrawRaf = 0;
     let cycleSubMode = "vol";
     let cycleSelectedIdx = null;
+    let hoverTradeDate = "";
+    let lockedTradeDate = "";
     let lwMainChart = null;
     let lwSubChart = null;
     let lwCandleSeries = null;
@@ -1517,6 +1584,8 @@
       currentReportData = null;
       currentTsCode = "";
       currentAssetType = "E";
+      hoverTradeDate = "";
+      lockedTradeDate = "";
       eventItems = [];
       activeEventUuid = "";
       reportEmptyEl.textContent = message || "请先在左侧执行分析任务";
@@ -1527,9 +1596,11 @@
         cycleDayInfoEl.textContent = "选中日期后展示当日开收盘、涨幅与主力净流入";
       }
       if (cycleStructOverlay) cycleStructOverlay.innerHTML = "";
+      if (cycleLockOverlay) cycleLockOverlay.innerHTML = "";
       if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
       renderEventList([]);
       cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
+      cycleUpdateEventTargetBar();
       updatePreviewMode("暂无数据");
       reportRenderMode = "none";
       showJsonPanel();
@@ -1688,6 +1759,116 @@
       if (!cycleDayInfoEl) return;
       cycleDayInfoEl.textContent =
         `${dateText || "-"} | 开盘 ${cycleFormatPrice(openV)} | 收盘 ${cycleFormatPrice(closeV)} | 涨幅 ${cycleFormatPct(pctV)} | 主力净流入 ${cycleFormatMoneyWanSigned(netV)}`;
+    }
+
+    function cycleGetLatestTradeDate() {
+      const rows = Array.isArray(lwCandleRows) ? lwCandleRows : [];
+      if (rows.length) {
+        return String(rows[rows.length - 1]?.trade_date || "");
+      }
+      return String(currentReportData?.summary?.latest_date || "");
+    }
+
+    function cycleGetCandleRowByDate(tradeDate) {
+      const safeDate = String(tradeDate || "");
+      if (!safeDate) return null;
+      const idx = lwDateToIdx.get(safeDate);
+      if (idx === undefined) return null;
+      const row = lwCandleRows[idx];
+      if (!row) return null;
+      return { row, idx };
+    }
+
+    function cycleUpdateEventTargetBar() {
+      if (!cycleEventTargetEl) return;
+      const latestDate = cycleGetLatestTradeDate();
+      if (lockedTradeDate) {
+        cycleEventTargetEl.textContent = `事件日期：${lockedTradeDate}（已锁定）`;
+      } else if (latestDate) {
+        cycleEventTargetEl.textContent = `事件日期：${latestDate}（未锁定，默认最新交易日）`;
+      } else {
+        cycleEventTargetEl.textContent = "事件日期：-";
+      }
+      if (cycleClearLockBtn) {
+        cycleClearLockBtn.disabled = !lockedTradeDate;
+      }
+    }
+
+    function cycleRefreshDayInfoByPriority() {
+      const candidate = hoverTradeDate || lockedTradeDate || cycleGetLatestTradeDate();
+      const hit = cycleGetCandleRowByDate(candidate);
+      if (!hit) return;
+      cycleSelectedIdx = hit.idx;
+      cycleSetDayInfoText(
+        hit.row.trade_date,
+        hit.row.open,
+        hit.row.close,
+        hit.row.pct_chg,
+        hit.row.net_mf_amount
+      );
+    }
+
+    function cycleSetLockedTradeDate(tradeDate) {
+      const safeDate = String(tradeDate || "");
+      if (!safeDate || !lwDateToIdx.has(safeDate)) return false;
+      lockedTradeDate = safeDate;
+      hoverTradeDate = "";
+      cycleUpdateEventTargetBar();
+      cycleRefreshDayInfoByPriority();
+      cycleRenderLockOverlay();
+      return true;
+    }
+
+    function cycleClearLockedTradeDate() {
+      lockedTradeDate = "";
+      cycleUpdateEventTargetBar();
+      cycleRefreshDayInfoByPriority();
+      cycleRenderLockOverlay();
+    }
+
+    function cycleSnapToNearestTradeDate(rawDate) {
+      const safeDate = String(rawDate || "").slice(0, 10);
+      const rows = Array.isArray(lwCandleRows) ? lwCandleRows : [];
+      if (!safeDate || !rows.length) {
+        return { date: safeDate, adjusted: false };
+      }
+      if (lwDateToIdx.has(safeDate)) {
+        return { date: safeDate, adjusted: false };
+      }
+      let previous = "";
+      let next = "";
+      for (let i = 0; i < rows.length; i += 1) {
+        const d = String(rows[i]?.trade_date || "");
+        if (!d) continue;
+        if (d < safeDate) {
+          previous = d;
+          continue;
+        }
+        if (d > safeDate) {
+          next = d;
+          break;
+        }
+      }
+      const snapped = previous || next || String(rows[rows.length - 1]?.trade_date || "");
+      return {
+        date: snapped,
+        adjusted: Boolean(snapped && snapped !== safeDate),
+      };
+    }
+
+    function cycleNormalizeEventDateInputWithHint() {
+      const raw = String(eventDateInput?.value || "").trim();
+      if (!raw) return "";
+      const snap = cycleSnapToNearestTradeDate(raw);
+      const finalDate = String(snap.date || "");
+      if (finalDate && eventDateInput && eventDateInput.value !== finalDate) {
+        eventDateInput.value = finalDate;
+      }
+      if (snap.adjusted && eventModalStatusEl) {
+        eventModalStatusEl.className = "muted";
+        eventModalStatusEl.textContent = `所选日期非交易日，已自动调整为最近交易日 ${finalDate}`;
+      }
+      return finalDate || raw;
     }
 
     function cycleSelectNearestByClientX(clientX, rect) {
@@ -2314,6 +2495,8 @@
       currentReportData = reportData;
       currentTsCode = String(reportData?.ts_code || "");
       currentAssetType = String(reportData?.asset_type || "E").toUpperCase();
+      hoverTradeDate = "";
+      lockedTradeDate = "";
       reportRenderMode = "json";
       reportEmptyEl.classList.add("hidden");
       reportContentEl.classList.remove("hidden");
@@ -2755,6 +2938,13 @@
 
       lwMainChart.subscribeCrosshairMove((param) => {
         const dateText = cycleTimeToDateText(param?.time);
+        if (!dateText) {
+          hoverTradeDate = "";
+          cycleRefreshDayInfoByPriority();
+          cycleUpdateEventTargetBar();
+          return;
+        }
+        hoverTradeDate = dateText;
         const idx = lwDateToIdx.get(dateText);
         if (idx === undefined) return;
         cycleSelectedIdx = idx;
@@ -2768,6 +2958,11 @@
           row.net_mf_amount
         );
       });
+      lwMainChart.subscribeClick((param) => {
+        const dateText = cycleTimeToDateText(param?.time);
+        if (!dateText) return;
+        cycleSetLockedTradeDate(dateText);
+      });
 
       lwMainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (lwSyncingRange) return;
@@ -2775,6 +2970,7 @@
         try {
           lwSubChart.timeScale().setVisibleLogicalRange(range);
           cycleRenderStructureOverlay(currentReportData || {});
+          cycleRenderLockOverlay();
           cycleRenderEventMarkersLightweight();
         } catch (_) {
           // no-op
@@ -2787,6 +2983,7 @@
         try {
           lwMainChart.timeScale().setVisibleLogicalRange(range);
           cycleRenderStructureOverlay(currentReportData || {});
+          cycleRenderLockOverlay();
           cycleRenderEventMarkersLightweight();
         } catch (_) {
           // no-op
@@ -2891,6 +3088,37 @@
         tag.style.top = `${Math.max(14, Math.min(cssH - 14, my))}px`;
         cycleStructOverlay.appendChild(tag);
       });
+    }
+
+    function cycleRenderLockOverlay() {
+      if (!cycleLockOverlay) return;
+      cycleLockOverlay.innerHTML = "";
+      if (!lwMainChart || !lwCandleSeries || !lockedTradeDate) return;
+      const hit = cycleGetCandleRowByDate(lockedTradeDate);
+      if (!hit) return;
+      const cssW = Math.max(280, cycleMainCanvas.clientWidth || 0);
+      const cssH = Math.max(120, cycleMainCanvas.clientHeight || 0);
+      const x = lwMainChart.timeScale().timeToCoordinate?.(lockedTradeDate);
+      const y = lwCandleSeries.priceToCoordinate?.(Number(hit.row.close ?? hit.row.high ?? hit.row.open ?? 0));
+      if (
+        x === null || x === undefined || y === null || y === undefined
+        || !Number.isFinite(Number(x)) || !Number.isFinite(Number(y))
+      ) {
+        return;
+      }
+      const xPos = Math.max(0, Math.min(cssW, Number(x)));
+      const yPos = Math.max(0, Math.min(cssH, Number(y)));
+
+      const line = document.createElement("div");
+      line.className = "cycle-lock-line";
+      line.style.left = `${xPos}px`;
+      cycleLockOverlay.appendChild(line);
+
+      const dot = document.createElement("div");
+      dot.className = "cycle-lock-dot";
+      dot.style.left = `${xPos}px`;
+      dot.style.top = `${yPos}px`;
+      cycleLockOverlay.appendChild(dot);
     }
 
     function cycleRenderEventMarkersLightweight() {
@@ -3031,12 +3259,16 @@
       const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
       if (!candles.length) {
         if (cycleStructOverlay) cycleStructOverlay.innerHTML = "";
+        if (cycleLockOverlay) cycleLockOverlay.innerHTML = "";
         if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
         lwCandleRows = [];
         lwDateToIdx = new Map();
         lwLastDataStamp = "";
+        hoverTradeDate = "";
+        if (lockedTradeDate && !lwDateToIdx.has(lockedTradeDate)) lockedTradeDate = "";
         lwCandleSeries.setData([]);
         lwSubSeries.setData([]);
+        cycleUpdateEventTargetBar();
         return;
       }
 
@@ -3080,18 +3312,19 @@
         lwSubChart.timeScale().fitContent();
         lwLastDataStamp = newStamp;
       }
+      if (lockedTradeDate && !lwDateToIdx.has(lockedTradeDate)) {
+        lockedTradeDate = "";
+      }
       const latest = candles[candles.length - 1];
       if (latest) {
-        cycleSelectedIdx = candles.length - 1;
-        cycleSetDayInfoText(
-          latest.trade_date,
-          latest.open,
-          latest.close,
-          latest.pct_chg,
-          latest.net_mf_amount
-        );
+        if (!hoverTradeDate && !lockedTradeDate) {
+          hoverTradeDate = String(latest.trade_date || "");
+        }
       }
+      cycleUpdateEventTargetBar();
+      cycleRefreshDayInfoByPriority();
       cycleRenderStructureOverlay(reportData);
+      cycleRenderLockOverlay();
       cycleRenderEventMarkersLightweight();
     }
 
@@ -3108,6 +3341,61 @@
       if (lwRenderBound) return;
       lwRenderBound = true;
       const redraw = () => cycleScheduleDraw();
+      const lockByClientX = (clientX) => {
+        if (!lwMainChart || !currentReportData?.candles?.length) return false;
+        const rect = cycleMainCanvas.getBoundingClientRect();
+        const localX = Math.max(0, Math.min(rect.width, Number(clientX || 0) - rect.left));
+        const time = lwMainChart.timeScale().coordinateToTime?.(localX);
+        const dateText = cycleTimeToDateText(time);
+        if (dateText && lwDateToIdx.has(dateText)) {
+          return cycleSetLockedTradeDate(dateText);
+        }
+        const logicalRange = lwMainChart.timeScale().getVisibleLogicalRange?.();
+        if (!logicalRange) return false;
+        const span = logicalRange.to - logicalRange.from;
+        const logical = logicalRange.from + (localX / Math.max(1, rect.width)) * span;
+        const idx = Math.max(0, Math.min(lwCandleRows.length - 1, Math.round(logical)));
+        const fallbackDate = String(lwCandleRows[idx]?.trade_date || "");
+        if (!fallbackDate) return false;
+        return cycleSetLockedTradeDate(fallbackDate);
+      };
+
+      let longPressTimer = 0;
+      let longPressStartX = 0;
+      let longPressStartY = 0;
+      const LONG_PRESS_MS = 420;
+      const LONG_PRESS_MOVE_PX = 10;
+      const cancelLongPress = () => {
+        if (!longPressTimer) return;
+        clearTimeout(longPressTimer);
+        longPressTimer = 0;
+      };
+
+      if (cycleMainCanvas) {
+        cycleMainCanvas.addEventListener("touchstart", (e) => {
+          if (reportRenderMode !== "json") return;
+          if (!e.touches || e.touches.length !== 1) return;
+          const t = e.touches[0];
+          longPressStartX = Number(t.clientX || 0);
+          longPressStartY = Number(t.clientY || 0);
+          cancelLongPress();
+          longPressTimer = window.setTimeout(() => {
+            longPressTimer = 0;
+            lockByClientX(longPressStartX);
+          }, LONG_PRESS_MS);
+        }, { passive: true });
+        cycleMainCanvas.addEventListener("touchmove", (e) => {
+          if (!longPressTimer || !e.touches || e.touches.length !== 1) return;
+          const t = e.touches[0];
+          const dx = Number(t.clientX || 0) - longPressStartX;
+          const dy = Number(t.clientY || 0) - longPressStartY;
+          if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_PX) {
+            cancelLongPress();
+          }
+        }, { passive: true });
+        cycleMainCanvas.addEventListener("touchend", cancelLongPress, { passive: true });
+        cycleMainCanvas.addEventListener("touchcancel", cancelLongPress, { passive: true });
+      }
 
       cycleZoomInBtn.addEventListener("click", () => {
         if (!lwMainChart) return;
@@ -3363,9 +3651,7 @@
       if (eventAssetSearchInput) eventAssetSearchInput.value = "";
       if (eventGlobalInput) eventGlobalInput.checked = false;
       if (eventDateInput) {
-        const safeDate = cycleSelectedIdx !== null && currentReportData?.candles?.[cycleSelectedIdx]
-          ? String(currentReportData.candles[cycleSelectedIdx].trade_date || "")
-          : String(currentReportData?.summary?.latest_date || "");
+        const safeDate = String(lockedTradeDate || cycleGetLatestTradeDate() || "");
         eventDateInput.value = safeDate || "";
       }
       if (eventModalStatusEl) {
@@ -3585,7 +3871,7 @@
         }
         return;
       }
-      const tradeDate = (eventDateInput?.value || "").trim();
+      const tradeDate = cycleNormalizeEventDateInputWithHint();
       const title = (eventTitleInput?.value || "").trim();
       const content = (eventContentInput?.value || "").trim();
       const tags = (eventTagsInput?.value || "").trim();
@@ -4484,6 +4770,18 @@
         openEventModal();
       });
     }
+    if (cycleClearLockBtn) {
+      cycleClearLockBtn.addEventListener("click", () => {
+        cycleClearLockedTradeDate();
+      });
+    }
+    if (cycleUseLatestBtn) {
+      cycleUseLatestBtn.addEventListener("click", () => {
+        const latest = cycleGetLatestTradeDate();
+        if (!latest) return;
+        cycleSetLockedTradeDate(latest);
+      });
+    }
     if (eventDetailCloseBtn) {
       eventDetailCloseBtn.addEventListener("click", () => {
         activeEventUuid = "";
@@ -4507,6 +4805,14 @@
     }
     if (eventSubmitBtn) {
       eventSubmitBtn.addEventListener("click", submitEventFromModal);
+    }
+    if (eventDateInput) {
+      eventDateInput.addEventListener("change", () => {
+        cycleNormalizeEventDateInputWithHint();
+      });
+      eventDateInput.addEventListener("blur", () => {
+        cycleNormalizeEventDateInputWithHint();
+      });
     }
     if (eventGlobalInput) {
       eventGlobalInput.addEventListener("change", () => {
