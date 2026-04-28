@@ -254,6 +254,7 @@
       border: 1px solid #e2e8f0;
       border-radius: 8px;
       overflow: hidden;
+      position: relative;
     }
     .cycle-sub-pane {
       height: 32%;
@@ -268,6 +269,80 @@
       height: 100%;
       display: block;
       touch-action: none;
+    }
+    .cycle-event-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 8;
+    }
+    .cycle-event-mini {
+      position: absolute;
+      max-width: 140px;
+      border: 1px solid #dbe3ee;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.95);
+      color: #1e293b;
+      font-size: 11px;
+      line-height: 1.2;
+      padding: 4px 8px;
+      cursor: pointer;
+      pointer-events: auto;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+    }
+    .cycle-event-mini.global::before {
+      content: "● ";
+      color: #2563eb;
+    }
+    .cycle-event-mini.active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1e3a8a;
+    }
+    .cycle-event-popup {
+      position: absolute;
+      min-width: 240px;
+      max-width: min(360px, calc(100% - 12px));
+      border: 1px solid #93c5fd;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.98);
+      pointer-events: auto;
+      z-index: 10;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+    }
+    .cycle-event-popup-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 4px 10px;
+      color: #0f172a;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .cycle-event-popup-close {
+      border: none;
+      background: transparent;
+      color: #64748b;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+    .cycle-event-popup-meta {
+      padding: 0 10px;
+      color: #64748b;
+      font-size: 12px;
+    }
+    .cycle-event-popup-body {
+      padding: 8px 10px 10px 10px;
+      color: #0f172a;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
     }
     .cycle-sub-switch {
       margin-top: 8px;
@@ -302,6 +377,178 @@
       color: #334155;
       font-size: 12px;
       line-height: 1.45;
+    }
+    .cycle-events {
+      margin-top: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+    .cycle-events-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .cycle-events-title {
+      color: #334155;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .event-list {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      max-height: 140px;
+      overflow: auto;
+      align-content: flex-start;
+    }
+    .event-badge {
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      color: #334155;
+      background: #f8fafc;
+      cursor: pointer;
+      max-width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .event-badge.global {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+    .event-badge.active {
+      border-color: #2563eb;
+      background: #dbeafe;
+      color: #1e3a8a;
+    }
+    .event-empty {
+      color: #94a3b8;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 6px 0;
+    }
+    .event-detail {
+      margin-top: 8px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #f8fbff;
+      padding: 8px;
+    }
+    .event-detail-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #1e293b;
+      font-weight: 600;
+    }
+    .event-close-btn {
+      border: none;
+      background: transparent;
+      color: #64748b;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+    .event-detail-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .event-detail-content {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #0f172a;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .event-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      z-index: 120;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .event-modal.show {
+      display: flex;
+    }
+    .event-modal-card {
+      width: min(760px, 100%);
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #cbd5e1;
+      padding: 14px;
+      box-sizing: border-box;
+    }
+    .event-modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .event-modal-title {
+      font-size: 16px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .event-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .event-form-grid .full {
+      grid-column: 1 / -1;
+    }
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      resize: vertical;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+    .event-selected {
+      margin-top: 6px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .picked-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #334155;
+      background: #f8fafc;
+    }
+    .picked-chip button {
+      border: none;
+      background: transparent;
+      color: #64748b;
+      padding: 0;
+      font-size: 12px;
+      cursor: pointer;
     }
     .report-table-wrap {
       margin-top: 8px;
@@ -804,10 +1051,26 @@
             <div id="reportMeta" class="cycle-meta"></div>
             <div id="reportSummary" class="summary"></div>
             <div id="cycleDayInfo" class="cycle-day-info">选中日期后展示当日开收盘、涨幅与主力净流入</div>
+            <div class="cycle-events">
+              <div class="cycle-events-header">
+                <div class="cycle-events-title">事件记录（未点击展示摘要，点击查看详情）</div>
+                <button id="eventCreateBtn" class="secondary" type="button">为当日新建事件</button>
+              </div>
+              <div id="eventList" class="event-list"></div>
+              <div id="eventDetail" class="event-detail hidden">
+                <div class="event-detail-title">
+                  <span id="eventDetailTitle">-</span>
+                  <button id="eventDetailClose" type="button" class="event-close-btn" aria-label="关闭">×</button>
+                </div>
+                <div id="eventDetailMeta" class="event-detail-meta">-</div>
+                <div id="eventDetailContent" class="event-detail-content">-</div>
+              </div>
+            </div>
             <div id="cycleChartPanel" class="chart-card" style="margin-top:8px">
               <div id="cycleChartWrap" class="cycle-chart-wrap">
                 <div class="cycle-main-pane">
                   <canvas id="cycleMainCanvas"></canvas>
+                  <div id="cycleEventOverlay" class="cycle-event-overlay"></div>
                 </div>
                 <div class="cycle-sub-pane">
                   <canvas id="cycleSubCanvas"></canvas>
@@ -852,6 +1115,48 @@
         <div class="iframe-wrap hidden" id="iframeWrap">
           <iframe id="viewer" src="about:blank" title="导出HTML预览"></iframe>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="eventModal" class="event-modal" aria-hidden="true">
+    <div class="event-modal-card">
+      <div class="event-modal-head">
+        <div class="event-modal-title">新建事件</div>
+        <button id="eventModalClose" class="secondary" type="button">关闭</button>
+      </div>
+      <div class="event-form-grid">
+        <div>
+          <label>事件日期</label>
+          <input id="eventDateInput" type="date" />
+        </div>
+        <div>
+          <label>标签（可选）</label>
+          <input id="eventTagsInput" type="text" placeholder="例如：财报, 回购, 宏观" />
+        </div>
+        <div class="full">
+          <label>事件标题</label>
+          <input id="eventTitleInput" type="text" maxlength="120" placeholder="例如：2025年年度报告发布" />
+        </div>
+        <div class="full">
+          <label>事件内容</label>
+          <textarea id="eventContentInput" maxlength="4000" placeholder="输入事件详细描述"></textarea>
+        </div>
+        <div class="full">
+          <label><input id="eventGlobalInput" type="checkbox" /> 全局事件（所有股票都展示）</label>
+        </div>
+        <div class="full">
+          <label>关联股票（支持多选）</label>
+          <div class="suggest-wrap">
+            <input id="eventAssetSearch" type="text" autocomplete="off" placeholder="输入股票名或代码，点选添加" />
+            <div id="eventAssetSuggest" class="suggest-list"></div>
+          </div>
+          <div id="eventSelectedAssets" class="event-selected"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="eventSubmitBtn" type="button">保存事件</button>
+        <span id="eventModalStatus" class="muted">填写后保存</span>
       </div>
     </div>
   </div>
@@ -916,6 +1221,7 @@
     const cycleChartPanel = document.getElementById("cycleChartPanel");
     const cycleChartWrap = document.getElementById("cycleChartWrap");
     const cycleMainCanvas = document.getElementById("cycleMainCanvas");
+    const cycleEventOverlay = document.getElementById("cycleEventOverlay");
     const cycleSubCanvas = document.getElementById("cycleSubCanvas");
     const cycleSubVolBtn = document.getElementById("cycleSubVol");
     const cycleSubAmountBtn = document.getElementById("cycleSubAmount");
@@ -925,6 +1231,25 @@
     const cycleSubLgNetBtn = document.getElementById("cycleSubLgNet");
     const cycleSubMdNetBtn = document.getElementById("cycleSubMdNet");
     const cycleSubSmNetBtn = document.getElementById("cycleSubSmNet");
+    const eventCreateBtn = document.getElementById("eventCreateBtn");
+    const eventListEl = document.getElementById("eventList");
+    const eventDetailEl = document.getElementById("eventDetail");
+    const eventDetailTitleEl = document.getElementById("eventDetailTitle");
+    const eventDetailMetaEl = document.getElementById("eventDetailMeta");
+    const eventDetailContentEl = document.getElementById("eventDetailContent");
+    const eventDetailCloseBtn = document.getElementById("eventDetailClose");
+    const eventModal = document.getElementById("eventModal");
+    const eventModalCloseBtn = document.getElementById("eventModalClose");
+    const eventDateInput = document.getElementById("eventDateInput");
+    const eventTagsInput = document.getElementById("eventTagsInput");
+    const eventTitleInput = document.getElementById("eventTitleInput");
+    const eventContentInput = document.getElementById("eventContentInput");
+    const eventGlobalInput = document.getElementById("eventGlobalInput");
+    const eventAssetSearchInput = document.getElementById("eventAssetSearch");
+    const eventAssetSuggestEl = document.getElementById("eventAssetSuggest");
+    const eventSelectedAssetsEl = document.getElementById("eventSelectedAssets");
+    const eventSubmitBtn = document.getElementById("eventSubmitBtn");
+    const eventModalStatusEl = document.getElementById("eventModalStatus");
     const cycleTableBody = document.getElementById("cycleTableBody");
     const cycleZoomInBtn = document.getElementById("cycleZoomIn");
     const cycleZoomOutBtn = document.getElementById("cycleZoomOut");
@@ -960,6 +1285,12 @@
     let cycleDrawRaf = 0;
     let cycleSubMode = "vol";
     let cycleSelectedIdx = null;
+    let currentTsCode = "";
+    let currentAssetType = "E";
+    let eventItems = [];
+    let activeEventUuid = "";
+    let eventPickedAssets = [];
+    let eventSuggestTimer = null;
     let suggestTimer = null;
     let activeSuggestBox = null;
 
@@ -1058,6 +1389,10 @@
 
     function clearCycleReportView(message) {
       currentReportData = null;
+      currentTsCode = "";
+      currentAssetType = "E";
+      eventItems = [];
+      activeEventUuid = "";
       reportEmptyEl.textContent = message || "请先在左侧执行分析任务";
       reportEmptyEl.classList.remove("hidden");
       reportContentEl.classList.add("hidden");
@@ -1065,6 +1400,8 @@
       if (cycleDayInfoEl) {
         cycleDayInfoEl.textContent = "选中日期后展示当日开收盘、涨幅与主力净流入";
       }
+      if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
+      renderEventList([]);
       cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
       updatePreviewMode("暂无数据");
       reportRenderMode = "none";
@@ -1309,6 +1646,113 @@
       ctx.fillStyle = color;
       ctx.textBaseline = "middle";
       ctx.fillText(text, x0 + padX, y0 + h / 2 + 0.5);
+    }
+
+    function cycleRenderEventMarkers({
+      dates,
+      leftIdx,
+      rightIdx,
+      xOf,
+      yOf,
+      highs,
+      mainPad,
+      mainCssH,
+      cssW,
+      mobile,
+    }) {
+      if (!cycleEventOverlay) return;
+      cycleEventOverlay.innerHTML = "";
+      if (!Array.isArray(eventItems) || !eventItems.length) return;
+      const dateToIdx = new Map();
+      dates.forEach((d, i) => {
+        if (!dateToIdx.has(d)) dateToIdx.set(d, i);
+      });
+      const visible = eventItems
+        .map((item) => {
+          const idx = dateToIdx.get(String(item.trade_date || ""));
+          if (idx === undefined || idx < leftIdx || idx > rightIdx) return null;
+          return { ...item, __idx: idx };
+        })
+        .filter(Boolean);
+      if (!visible.length) return;
+
+      const laneUsed = [];
+      const maxLanes = mobile ? 2 : 4;
+      const laneStep = mobile ? 20 : 24;
+      const topBase = mainPad.t + 4;
+
+      visible.forEach((item) => {
+        const idx = Number(item.__idx);
+        const leftPxRaw = xOf(idx);
+        const leftPx = Math.max(2, Math.min(cssW - 80, leftPxRaw - 56));
+        let lane = 0;
+        while (lane < maxLanes) {
+          const arr = laneUsed[lane] || [];
+          const overlap = arr.some((x) => Math.abs(x - leftPx) < 110);
+          if (!overlap) break;
+          lane += 1;
+        }
+        if (lane >= maxLanes) lane = maxLanes - 1;
+        if (!laneUsed[lane]) laneUsed[lane] = [];
+        laneUsed[lane].push(leftPx);
+        const topPx = topBase + lane * laneStep;
+
+        const mini = document.createElement("button");
+        mini.type = "button";
+        mini.className = `cycle-event-mini ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+        mini.textContent = item.title ? (item.title.length > 10 ? `${item.title.slice(0, 10)}...` : item.title) : "(无标题)";
+        mini.style.left = `${leftPx}px`;
+        mini.style.top = `${Math.min(mainCssH - 26, topPx)}px`;
+        mini.dataset.eventUuid = item.event_uuid || "";
+        mini.title = `${item.global_event ? "全局事件 | " : ""}${item.title || ""}`;
+        mini.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const uuid = mini.dataset.eventUuid || "";
+          activeEventUuid = uuid;
+          const hit = eventItems.find((x) => x.event_uuid === uuid) || null;
+          renderEventList(eventItems);
+          renderEventDetail(hit);
+          cycleScheduleDraw();
+        });
+        cycleEventOverlay.appendChild(mini);
+      });
+
+      const active = eventItems.find((x) => x.event_uuid === activeEventUuid);
+      if (!active) return;
+      const activeIdx = dateToIdx.get(String(active.trade_date || ""));
+      if (activeIdx === undefined || activeIdx < leftIdx || activeIdx > rightIdx) return;
+      const px = xOf(activeIdx);
+      const py = yOf(Number(highs[activeIdx] || 0));
+      const popup = document.createElement("div");
+      popup.className = "cycle-event-popup";
+      let left = px + 10;
+      const maxLeft = cssW - (mobile ? 250 : 360) - 8;
+      if (left > maxLeft) left = Math.max(8, px - (mobile ? 250 : 360));
+      let top = py + 8;
+      if (top < mainPad.t + 6) top = mainPad.t + 6;
+      if (top > mainCssH - 180) top = Math.max(mainPad.t + 6, mainCssH - 180);
+      popup.style.left = `${left}px`;
+      popup.style.top = `${top}px`;
+      const scopeText = active.global_event ? "全局事件" : `关联 ${Array.isArray(active.ts_codes) ? active.ts_codes.length : 0} 只股票`;
+      const tagsText = active.tags ? ` | 标签: ${active.tags}` : "";
+      popup.innerHTML = `
+        <div class="cycle-event-popup-head">
+          <span>${escHtml(active.title || "-")}</span>
+          <button type="button" class="cycle-event-popup-close" aria-label="关闭">×</button>
+        </div>
+        <div class="cycle-event-popup-meta">${escHtml(String(active.trade_date || ""))} | ${escHtml(scopeText + tagsText)}</div>
+        <div class="cycle-event-popup-body">${escHtml(active.content || "-")}</div>
+      `;
+      const closeBtn = popup.querySelector(".cycle-event-popup-close");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          activeEventUuid = "";
+          renderEventList(eventItems);
+          cycleScheduleDraw();
+        });
+      }
+      cycleEventOverlay.appendChild(popup);
     }
 
     function drawCycleCanvas(reportData) {
@@ -1626,6 +2070,19 @@
       subCtx.fillStyle = "#475569";
       subCtx.font = mobile ? "10px sans-serif" : "11px sans-serif";
       subCtx.fillText(subTitle, subPad.l + 4, subPad.t - 4);
+
+      cycleRenderEventMarkers({
+        dates,
+        leftIdx,
+        rightIdx,
+        xOf,
+        yOf,
+        highs,
+        mainPad,
+        mainCssH,
+        cssW,
+        mobile,
+      });
     }
 
     function cycleScheduleDraw() {
@@ -1701,11 +2158,17 @@
 
     function renderCycleReportData(reportData, sourceText) {
       currentReportData = reportData;
+      currentTsCode = String(reportData?.ts_code || "");
+      currentAssetType = String(reportData?.asset_type || "E").toUpperCase();
       reportRenderMode = "json";
       reportEmptyEl.classList.add("hidden");
       reportContentEl.classList.remove("hidden");
       showJsonPanel();
       cycleResetView(reportData || {});
+      eventItems = Array.isArray(reportData?.events) ? reportData.events : [];
+      activeEventUuid = "";
+      renderEventList(eventItems);
+      loadEventsForCurrentReport();
       renderCyclePanelSummary(reportData?.summary || null);
       renderCycleRows(reportData?.cycles || []);
       cycleScheduleDraw();
@@ -2061,6 +2524,7 @@
     function hideAllSuggestBoxes() {
       hideSuggestBox(nameSuggestEl);
       hideSuggestBox(fundNameSuggestEl);
+      hideSuggestBox(eventAssetSuggestEl);
     }
 
     async function fetchSuggestions(query, assetType) {
@@ -2074,6 +2538,19 @@
       const resp = await fetch(`/api/suggestions?${params.toString()}`);
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "suggestions failed");
+      return data.items || [];
+    }
+
+    async function fetchEventAssetSuggestions(query) {
+      const q = String(query || "").trim();
+      if (!q) return [];
+      const params = new URLSearchParams({
+        query: q,
+        limit: "12",
+      });
+      const resp = await fetch(`/api/event-suggestions?${params.toString()}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "event suggestions failed");
       return data.items || [];
     }
 
@@ -2134,6 +2611,272 @@
       input.addEventListener("keydown", (event) => {
         if (event.key === "Escape") hideSuggestBox(box);
       });
+    }
+
+    function renderEventPickedAssets() {
+      if (!eventSelectedAssetsEl) return;
+      if (!eventPickedAssets.length) {
+        eventSelectedAssetsEl.innerHTML = '<span class="muted">未选择股票</span>';
+        return;
+      }
+      eventSelectedAssetsEl.innerHTML = eventPickedAssets.map((item) => `
+        <span class="picked-chip">
+          ${escHtml(item.name)} (${escHtml(item.ts_code)})
+          <button type="button" data-code="${escHtml(item.ts_code)}">×</button>
+        </span>
+      `).join("");
+      Array.from(eventSelectedAssetsEl.querySelectorAll("button[data-code]")).forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const code = String(btn.dataset.code || "").toUpperCase();
+          eventPickedAssets = eventPickedAssets.filter((x) => x.ts_code.toUpperCase() !== code);
+          renderEventPickedAssets();
+        });
+      });
+    }
+
+    function resetEventModalForm() {
+      eventPickedAssets = [];
+      renderEventPickedAssets();
+      if (eventTagsInput) eventTagsInput.value = "";
+      if (eventTitleInput) eventTitleInput.value = "";
+      if (eventContentInput) eventContentInput.value = "";
+      if (eventAssetSearchInput) eventAssetSearchInput.value = "";
+      if (eventGlobalInput) eventGlobalInput.checked = false;
+      if (eventDateInput) {
+        const safeDate = cycleSelectedIdx !== null && currentReportData?.candles?.[cycleSelectedIdx]
+          ? String(currentReportData.candles[cycleSelectedIdx].trade_date || "")
+          : String(currentReportData?.summary?.latest_date || "");
+        eventDateInput.value = safeDate || "";
+      }
+      if (eventModalStatusEl) {
+        eventModalStatusEl.className = "muted";
+        eventModalStatusEl.textContent = "填写后保存";
+      }
+    }
+
+    function openEventModal() {
+      if (!eventModal) return;
+      resetEventModalForm();
+      eventModal.classList.add("show");
+      eventModal.setAttribute("aria-hidden", "false");
+      if (eventTitleInput) {
+        setTimeout(() => eventTitleInput.focus(), 60);
+      }
+    }
+
+    function closeEventModal() {
+      if (!eventModal) return;
+      eventModal.classList.remove("show");
+      eventModal.setAttribute("aria-hidden", "true");
+      hideSuggestBox(eventAssetSuggestEl);
+    }
+
+    function pickEventAsset(item) {
+      const code = String(item.ts_code || "").toUpperCase();
+      if (!code) return;
+      if (eventPickedAssets.some((x) => x.ts_code.toUpperCase() === code)) return;
+      eventPickedAssets.push({
+        ts_code: code,
+        name: String(item.name || code),
+        asset_type: String(item.asset_type || "E").toUpperCase(),
+      });
+      renderEventPickedAssets();
+    }
+
+    function bindEventAssetSuggestInput() {
+      if (!eventAssetSearchInput || !eventAssetSuggestEl) return;
+      let reqToken = 0;
+      eventAssetSearchInput.addEventListener("input", () => {
+        clearTimeout(eventSuggestTimer);
+        eventSuggestTimer = setTimeout(async () => {
+          const q = eventAssetSearchInput.value.trim();
+          if (!q) {
+            hideSuggestBox(eventAssetSuggestEl);
+            return;
+          }
+          const curToken = ++reqToken;
+          try {
+            const items = await fetchEventAssetSuggestions(q);
+            if (curToken !== reqToken) return;
+            if (!items.length) {
+              hideSuggestBox(eventAssetSuggestEl);
+              return;
+            }
+            eventAssetSuggestEl.innerHTML = items.map((item) => `
+              <div class="suggest-item" data-name="${escHtml(item.name)}" data-code="${escHtml(item.ts_code)}" data-asset-type="${escHtml(item.asset_type || "")}">
+                ${escHtml(item.name)}
+                <span class="muted">${escHtml(item.ts_code)} ${escHtml(item.asset_type === "H" ? "港股" : (item.asset_type === "F" ? "基金" : "A股"))}</span>
+              </div>
+            `).join("");
+            eventAssetSuggestEl.classList.add("show");
+            Array.from(eventAssetSuggestEl.querySelectorAll(".suggest-item")).forEach((el) => {
+              el.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                pickEventAsset({
+                  name: el.dataset.name || "",
+                  ts_code: el.dataset.code || "",
+                  asset_type: el.dataset.assetType || "",
+                });
+                eventAssetSearchInput.value = "";
+                hideSuggestBox(eventAssetSuggestEl);
+              });
+            });
+          } catch (_) {
+            hideSuggestBox(eventAssetSuggestEl);
+          }
+        }, 140);
+      });
+      eventAssetSearchInput.addEventListener("blur", () => {
+        setTimeout(() => hideSuggestBox(eventAssetSuggestEl), 140);
+      });
+      eventAssetSearchInput.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") hideSuggestBox(eventAssetSuggestEl);
+      });
+    }
+
+    function formatEventDateText(v) {
+      if (!v) return "-";
+      return String(v).slice(0, 10);
+    }
+
+    function eventBadgeText(item) {
+      const title = String(item?.title || "");
+      if (!title) return "(无标题)";
+      if (title.length <= 10) return title;
+      return `${title.slice(0, 10)}...`;
+    }
+
+    function renderEventDetail(item) {
+      if (!eventDetailEl || !eventDetailTitleEl || !eventDetailMetaEl || !eventDetailContentEl) return;
+      if (!item) {
+        eventDetailEl.classList.add("hidden");
+        return;
+      }
+      eventDetailEl.classList.remove("hidden");
+      eventDetailTitleEl.textContent = item.title || "-";
+      const scopeText = item.global_event ? "全局事件" : `关联 ${Array.isArray(item.ts_codes) ? item.ts_codes.length : 0} 只股票`;
+      const tagsText = item.tags ? ` | 标签: ${item.tags}` : "";
+      eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}`;
+      eventDetailContentEl.textContent = item.content || "-";
+    }
+
+    function renderEventList(items) {
+      if (!eventListEl) return;
+      eventItems = Array.isArray(items) ? items : [];
+      if (!eventItems.length) {
+        eventListEl.innerHTML = '<div class="event-empty">暂无事件记录，可在右上角新建。</div>';
+        renderEventDetail(null);
+        activeEventUuid = "";
+        return;
+      }
+      eventListEl.innerHTML = eventItems.map((item) => {
+        const globalCls = item.global_event ? "global" : "";
+        const activeCls = item.event_uuid === activeEventUuid ? "active" : "";
+        const scopeMark = item.global_event ? "全局 | " : "";
+        const preview = eventBadgeText(item);
+        return `<button type="button" class="event-badge ${globalCls} ${activeCls}" data-event-uuid="${escHtml(item.event_uuid)}" title="${escHtml(scopeMark + (item.title || ''))}">${escHtml(scopeMark + preview)}</button>`;
+      }).join("");
+      Array.from(eventListEl.querySelectorAll("button[data-event-uuid]")).forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const eventUuid = btn.dataset.eventUuid || "";
+          activeEventUuid = eventUuid;
+          const hit = eventItems.find((x) => x.event_uuid === eventUuid) || null;
+          renderEventList(eventItems);
+          renderEventDetail(hit);
+          cycleScheduleDraw();
+        });
+      });
+      const selected = eventItems.find((x) => x.event_uuid === activeEventUuid) || null;
+      renderEventDetail(selected);
+    }
+
+    async function loadEventsForCurrentReport() {
+      if (!currentReportData?.summary?.date_range || !currentReportData?.ts_code) {
+        renderEventList([]);
+        return;
+      }
+      const range = currentReportData.summary.date_range || [];
+      const startDate = String(range[0] || "");
+      const endDate = String(range[1] || "");
+      if (!startDate || !endDate) {
+        renderEventList([]);
+        return;
+      }
+      try {
+        const params = new URLSearchParams({
+          ts_code: String(currentReportData.ts_code || ""),
+          asset_type: String(currentReportData.asset_type || "E"),
+          start_date: startDate,
+          end_date: endDate,
+        });
+        const resp = await fetch(`/api/cycle-events?${params.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "load events failed");
+        renderEventList(data.items || []);
+        cycleScheduleDraw();
+      } catch (_) {
+        renderEventList([]);
+        cycleScheduleDraw();
+      }
+    }
+
+    async function submitEventFromModal() {
+      if (!currentTsCode || !currentAssetType) {
+        if (eventModalStatusEl) {
+          eventModalStatusEl.className = "error";
+          eventModalStatusEl.textContent = "当前未加载报告，无法创建事件";
+        }
+        return;
+      }
+      const tradeDate = (eventDateInput?.value || "").trim();
+      const title = (eventTitleInput?.value || "").trim();
+      const content = (eventContentInput?.value || "").trim();
+      const tags = (eventTagsInput?.value || "").trim();
+      const globalEvent = Boolean(eventGlobalInput?.checked);
+      const tsCodes = eventPickedAssets.map((x) => String(x.ts_code || "").toUpperCase());
+      if (!globalEvent && !tsCodes.includes(currentTsCode)) {
+        tsCodes.unshift(currentTsCode);
+      }
+      if (!tradeDate || !title || !content) {
+        if (eventModalStatusEl) {
+          eventModalStatusEl.className = "error";
+          eventModalStatusEl.textContent = "日期、标题、内容必填";
+        }
+        return;
+      }
+      if (eventModalStatusEl) {
+        eventModalStatusEl.className = "muted";
+        eventModalStatusEl.textContent = "保存中...";
+      }
+      try {
+        const payload = {
+          trade_date: tradeDate,
+          title,
+          content,
+          tags: tags || null,
+          global_event: globalEvent,
+          ts_codes: globalEvent ? tsCodes : Array.from(new Set(tsCodes)),
+          source: "ui",
+        };
+        const resp = await fetch("/api/cycle-events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "save event failed");
+        if (eventModalStatusEl) {
+          eventModalStatusEl.className = "ok";
+          eventModalStatusEl.textContent = "保存成功";
+        }
+        await loadEventsForCurrentReport();
+        closeEventModal();
+      } catch (e) {
+        if (eventModalStatusEl) {
+          eventModalStatusEl.className = "error";
+          eventModalStatusEl.textContent = String(e.message || e);
+        }
+      }
     }
 
     function renderSummary(summary) {
@@ -2975,6 +3718,47 @@
       if (currentHtmlUrl) window.open(currentHtmlUrl, "_blank");
     });
 
+    if (eventCreateBtn) {
+      eventCreateBtn.addEventListener("click", () => {
+        if (!currentTsCode) {
+          alert("请先生成并加载一个周期报告后再创建事件。");
+          return;
+        }
+        openEventModal();
+      });
+    }
+    if (eventDetailCloseBtn) {
+      eventDetailCloseBtn.addEventListener("click", () => {
+        activeEventUuid = "";
+        renderEventList(eventItems);
+        cycleScheduleDraw();
+      });
+    }
+    if (eventModalCloseBtn) {
+      eventModalCloseBtn.addEventListener("click", closeEventModal);
+    }
+    if (eventModal) {
+      eventModal.addEventListener("click", (event) => {
+        if (event.target === eventModal) closeEventModal();
+      });
+    }
+    if (eventSubmitBtn) {
+      eventSubmitBtn.addEventListener("click", submitEventFromModal);
+    }
+    if (eventGlobalInput) {
+      eventGlobalInput.addEventListener("change", () => {
+        if (eventGlobalInput.checked) {
+          if (eventModalStatusEl) {
+            eventModalStatusEl.className = "muted";
+            eventModalStatusEl.textContent = "已启用全局事件，关联股票可留空";
+          }
+        } else if (eventModalStatusEl) {
+          eventModalStatusEl.className = "muted";
+          eventModalStatusEl.textContent = "未启用全局事件，会自动包含当前股票";
+        }
+      });
+    }
+
     fsBtn.addEventListener("click", async () => {
       try {
         const target = reportRenderMode === "html" ? iframeWrap : reportPanel;
@@ -3027,6 +3811,7 @@
     bindCycleInteractions();
     bindSuggestInput(nameInput, nameSuggestEl, "S");
     bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
+    bindEventAssetSuggestInput();
     document.addEventListener("click", (event) => {
       if (!event.target.closest(".suggest-wrap")) {
         hideAllSuggestBoxes();

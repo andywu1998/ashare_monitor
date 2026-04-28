@@ -66,6 +66,8 @@ BREADTH_TABLE_READY: set[tuple[str, int, str, str]] = set()
 REPORT_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=REPORT_TASK_WORKERS)
 REPORT_TABLE_LOCK = Lock()
 REPORT_TABLE_READY: set[tuple[str, int, str, str]] = set()
+CYCLE_EVENT_TABLE_LOCK = Lock()
+CYCLE_EVENT_TABLE_READY: set[tuple[str, int, str, str]] = set()
 BREADTH_CACHE_LOCK = Lock()
 BREADTH_RESULT_CACHE: dict[str, tuple[float, str]] = {}
 REPORT_CACHE_LOCK = Lock()
@@ -415,6 +417,234 @@ def _ensure_report_task_tables(mysql_cfg: dict) -> None:
 
     with REPORT_TABLE_LOCK:
         REPORT_TABLE_READY.add(key)
+
+
+def _ensure_cycle_event_tables(mysql_cfg: dict) -> None:
+    key = (
+        str(mysql_cfg["host"]),
+        int(mysql_cfg.get("port", DEFAULT_MYSQL_PORT)),
+        str(mysql_cfg["user"]),
+        str(mysql_cfg["database"]),
+    )
+    with CYCLE_EVENT_TABLE_LOCK:
+        if key in CYCLE_EVENT_TABLE_READY:
+            return
+
+    event_sql = """
+    CREATE TABLE IF NOT EXISTS cycle_event (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      event_uuid CHAR(32) NOT NULL,
+      trade_date DATE NOT NULL,
+      title VARCHAR(120) NOT NULL,
+      content TEXT NOT NULL,
+      is_global TINYINT(1) NOT NULL DEFAULT 0,
+      tags VARCHAR(255) NULL,
+      source VARCHAR(32) NOT NULL DEFAULT 'manual',
+      created_by VARCHAR(64) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_event_uuid (event_uuid),
+      KEY idx_trade_date (trade_date),
+      KEY idx_global_trade_date (is_global, trade_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+
+    map_sql = """
+    CREATE TABLE IF NOT EXISTS cycle_event_asset (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      event_uuid CHAR(32) NOT NULL,
+      ts_code VARCHAR(16) NOT NULL,
+      asset_type CHAR(1) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_event_asset (event_uuid, ts_code),
+      KEY idx_ts_code (ts_code),
+      KEY idx_event_uuid (event_uuid)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(event_sql)
+            cursor.execute(map_sql)
+        conn.commit()
+
+    with CYCLE_EVENT_TABLE_LOCK:
+        CYCLE_EVENT_TABLE_READY.add(key)
+
+
+def _resolve_event_trade_date(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="trade_date is required")
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="trade_date must be YYYY-MM-DD") from exc
+    return parsed.isoformat()
+
+
+def _normalize_event_ts_codes(ts_codes: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for code in ts_codes or []:
+        safe = str(code or "").strip().upper()
+        if not safe or safe in seen:
+            continue
+        seen.add(safe)
+        out.append(safe)
+    return out
+
+
+def _fetch_event_asset_type_map(ts_codes: list[str], mysql_cfg: dict) -> dict[str, str]:
+    if not ts_codes:
+        return {}
+    marks = ",".join(["%s"] * len(ts_codes))
+    sql = f"""
+    SELECT ts_code, asset_type
+    FROM stock_basic
+    WHERE ts_code IN ({marks})
+      AND list_status = 'L'
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, tuple(ts_codes))
+            rows = cursor.fetchall() or []
+    out: dict[str, str] = {}
+    for row in rows:
+        code = str(row.get("ts_code") or "").upper()
+        typ = str(row.get("asset_type") or "").upper()[:1]
+        if code:
+            out[code] = typ or "E"
+    return out
+
+
+def _create_cycle_event(
+    *,
+    trade_date: str,
+    title: str,
+    content: str,
+    ts_codes: list[str],
+    is_global: bool,
+    tags: Optional[str],
+    source: str,
+    created_by: str,
+    mysql_cfg: dict,
+) -> dict:
+    _ensure_cycle_event_tables(mysql_cfg)
+    safe_title = (title or "").strip()
+    safe_content = (content or "").strip()
+    if not safe_title:
+        raise HTTPException(status_code=400, detail="title is required")
+    if not safe_content:
+        raise HTTPException(status_code=400, detail="content is required")
+    safe_trade_date = _resolve_event_trade_date(trade_date)
+    safe_codes = _normalize_event_ts_codes(ts_codes)
+    safe_source = (source or "manual").strip()[:32] or "manual"
+    safe_tags = (tags or "").strip()[:255] or None
+    safe_creator = (created_by or "").strip()[:64] or None
+    if (not is_global) and (not safe_codes):
+        raise HTTPException(status_code=400, detail="ts_codes required when global_event=false")
+
+    asset_type_map = _fetch_event_asset_type_map(safe_codes, mysql_cfg)
+    unknown = [c for c in safe_codes if c not in asset_type_map]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown ts_code(s): {','.join(unknown[:8])}")
+
+    event_uuid = uuid.uuid4().hex
+    event_sql = """
+    INSERT INTO cycle_event (
+      event_uuid, trade_date, title, content, is_global, tags, source, created_by
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    map_sql = """
+    INSERT INTO cycle_event_asset (event_uuid, ts_code, asset_type)
+    VALUES (%s, %s, %s)
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                event_sql,
+                (
+                    event_uuid,
+                    safe_trade_date,
+                    safe_title[:120],
+                    safe_content[:4000],
+                    1 if is_global else 0,
+                    safe_tags,
+                    safe_source,
+                    safe_creator,
+                ),
+            )
+            for code in safe_codes:
+                cursor.execute(map_sql, (event_uuid, code, asset_type_map.get(code) or "E"))
+        conn.commit()
+
+    return {
+        "event_uuid": event_uuid,
+        "trade_date": safe_trade_date,
+        "title": safe_title[:120],
+        "content": safe_content[:4000],
+        "global_event": bool(is_global),
+        "tags": safe_tags,
+        "source": safe_source,
+        "ts_codes": safe_codes,
+    }
+
+
+def _list_cycle_events(
+    *,
+    ts_code: str,
+    asset_type: str,
+    start_date: str,
+    end_date: str,
+    mysql_cfg: dict,
+) -> list[dict]:
+    _ensure_cycle_event_tables(mysql_cfg)
+    safe_code = (ts_code or "").strip().upper()
+    safe_type = (asset_type or "").strip().upper()[:1]
+    sql = """
+    SELECT e.event_uuid, e.trade_date, e.title, e.content, e.is_global, e.tags, e.source, e.created_at,
+           (
+             SELECT GROUP_CONCAT(DISTINCT aa.ts_code ORDER BY aa.ts_code SEPARATOR ',')
+             FROM cycle_event_asset aa
+             WHERE aa.event_uuid = e.event_uuid
+           ) AS ts_codes
+    FROM cycle_event e
+    WHERE e.trade_date BETWEEN %s AND %s
+      AND (
+        e.is_global = 1
+        OR EXISTS (
+          SELECT 1
+          FROM cycle_event_asset x
+          WHERE x.event_uuid = e.event_uuid
+            AND x.ts_code = %s
+        )
+      )
+    ORDER BY e.trade_date ASC, e.created_at ASC
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (start_date, end_date, safe_code))
+            rows = cursor.fetchall() or []
+
+    out: list[dict] = []
+    for row in rows:
+        codes = [x for x in str(row.get("ts_codes") or "").split(",") if x]
+        out.append(
+            {
+                "event_uuid": str(row.get("event_uuid") or ""),
+                "trade_date": str(row.get("trade_date") or ""),
+                "title": str(row.get("title") or ""),
+                "content": str(row.get("content") or ""),
+                "global_event": bool(row.get("is_global")),
+                "tags": row.get("tags"),
+                "source": row.get("source"),
+                "ts_codes": codes,
+                "asset_type": safe_type or None,
+                "created_at": _jsonify_value(row.get("created_at")),
+            }
+        )
+    return out
 
 
 def _ensure_market_breadth_tables(mysql_cfg: dict) -> None:
@@ -1912,6 +2142,16 @@ class UptrendQuery(BaseModel):
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD; default today")
 
 
+class EventCreateRequest(BaseModel):
+    trade_date: str = Field(..., description="YYYY-MM-DD")
+    title: str = Field(..., min_length=1, max_length=120)
+    content: str = Field(..., min_length=1, max_length=4000)
+    ts_codes: list[str] = Field(default_factory=list)
+    global_event: bool = Field(False, description="True means visible to all assets")
+    tags: Optional[str] = Field(None, max_length=255)
+    source: str = Field("manual", max_length=32)
+
+
 def _save_report(report_id: str, html: str, metadata: dict) -> Path:
     html_path = SERVICE_REPORT_DIR / f"{report_id}.html"
     meta_path = SERVICE_REPORT_DIR / f"{report_id}.json"
@@ -2130,6 +2370,13 @@ def _generate_report_impl(
         min_gap=min_gap,
         asset_type=safe_type,
         asset_label=asset_label,
+    )
+    report_data["events"] = _list_cycle_events(
+        ts_code=ts_code,
+        asset_type=safe_type,
+        start_date=start_date,
+        end_date=end_trade_date,
+        mysql_cfg=mysql_cfg,
     )
     summary = report_data.get("summary") or {}
 
@@ -2358,6 +2605,120 @@ def get_asset_suggestions(
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/event-suggestions")
+def get_event_suggestions(
+    query: str,
+    limit: int = 12,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    safe_limit = max(1, min(int(limit), 30))
+    try:
+        items = suggest_assets(
+            query=query,
+            asset_type="S",
+            limit=safe_limit,
+            mysql_connect=lambda: _mysql_connect(mysql_cfg),
+        )
+        return {
+            "query": query,
+            "asset_type": "S",
+            "limit": safe_limit,
+            "count": len(items),
+            "items": items,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cycle-events")
+def list_cycle_events(
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+    asset_type: str = "E",
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    try:
+        safe_start = _resolve_event_trade_date(start_date)
+        safe_end = _resolve_event_trade_date(end_date)
+        return {
+            "ts_code": ts_code.strip().upper(),
+            "asset_type": (asset_type or "E").strip().upper()[:1] or "E",
+            "start_date": safe_start,
+            "end_date": safe_end,
+            "items": _list_cycle_events(
+                ts_code=ts_code,
+                asset_type=asset_type,
+                start_date=safe_start,
+                end_date=safe_end,
+                mysql_cfg=mysql_cfg,
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/cycle-events")
+def create_cycle_event(
+    req: EventCreateRequest,
+    request: Request,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    creator = (request.client.host if request.client else "") or "ui"
+    try:
+        item = _create_cycle_event(
+            trade_date=req.trade_date,
+            title=req.title,
+            content=req.content,
+            ts_codes=req.ts_codes,
+            is_global=bool(req.global_event),
+            tags=req.tags,
+            source=req.source,
+            created_by=creator,
+            mysql_cfg=mysql_cfg,
+        )
+        return {"ok": True, "item": item}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

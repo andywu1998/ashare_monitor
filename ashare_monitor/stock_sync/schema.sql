@@ -87,3 +87,31 @@ CREATE TABLE IF NOT EXISTS market_breadth_daily (
     PRIMARY KEY (trade_date),
     KEY idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cycle_event (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    event_uuid CHAR(32) NOT NULL,
+    trade_date DATE NOT NULL,
+    title VARCHAR(120) NOT NULL,
+    content TEXT NOT NULL,
+    is_global TINYINT(1) NOT NULL DEFAULT 0,
+    tags VARCHAR(255) NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'manual',
+    created_by VARCHAR(64) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_event_uuid (event_uuid),
+    KEY idx_trade_date (trade_date),
+    KEY idx_global_trade_date (is_global, trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cycle_event_asset (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    event_uuid CHAR(32) NOT NULL,
+    ts_code VARCHAR(16) NOT NULL,
+    asset_type CHAR(1) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_event_asset (event_uuid, ts_code),
+    KEY idx_ts_code (ts_code),
+    KEY idx_event_uuid (event_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
