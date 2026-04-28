@@ -276,6 +276,61 @@
       pointer-events: none;
       z-index: 8;
     }
+    .cycle-struct-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 6;
+    }
+    .cycle-zz-line {
+      position: absolute;
+      height: 2px;
+      background: #f59e0b;
+      transform-origin: 0 50%;
+      opacity: 0.95;
+    }
+    .cycle-pivot-dot {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+    }
+    .cycle-pivot-dot.high {
+      background: #dc2626;
+    }
+    .cycle-pivot-dot.low {
+      background: #059669;
+    }
+    .cycle-pivot-label {
+      position: absolute;
+      font-size: 12px;
+      line-height: 1;
+      color: #0f172a;
+      transform: translate(6px, -8px);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+      white-space: nowrap;
+    }
+    .cycle-chg-tag {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.88);
+      padding: 2px 6px;
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+    }
+    .cycle-chg-tag.rise {
+      color: #b91c1c;
+    }
+    .cycle-chg-tag.fall {
+      color: #065f46;
+    }
     .cycle-event-mini {
       position: absolute;
       max-width: 140px;
@@ -483,6 +538,11 @@
       color: #1e293b;
       font-weight: 600;
     }
+    .event-detail-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
     .event-close-btn {
       border: none;
       background: transparent;
@@ -491,6 +551,16 @@
       line-height: 1;
       cursor: pointer;
       padding: 0;
+    }
+    .event-delete-btn {
+      border: 1px solid #fecaca;
+      background: #fff1f2;
+      color: #b91c1c;
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      line-height: 1.2;
+      cursor: pointer;
     }
     .event-detail-meta {
       margin-top: 4px;
@@ -1093,7 +1163,10 @@
               <div id="eventDetail" class="event-detail hidden">
                 <div class="event-detail-title">
                   <span id="eventDetailTitle">-</span>
-                  <button id="eventDetailClose" type="button" class="event-close-btn" aria-label="关闭">×</button>
+                  <span class="event-detail-actions">
+                    <button id="eventDetailDelete" type="button" class="event-delete-btn">删除</button>
+                    <button id="eventDetailClose" type="button" class="event-close-btn" aria-label="关闭">×</button>
+                  </span>
                 </div>
                 <div id="eventDetailMeta" class="event-detail-meta">-</div>
                 <div id="eventDetailContent" class="event-detail-content">-</div>
@@ -1103,6 +1176,7 @@
               <div id="cycleChartWrap" class="cycle-chart-wrap">
                 <div class="cycle-main-pane">
                   <div id="cycleMainChart"></div>
+                  <div id="cycleStructOverlay" class="cycle-struct-overlay"></div>
                   <div id="cycleEventOverlay" class="cycle-event-overlay"></div>
                 </div>
                 <div class="cycle-sub-pane">
@@ -1194,7 +1268,12 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/ui/vendor/lightweight-charts.standalone.production.js"></script>
+  <script>
+    if (!window.LightweightCharts) {
+      document.write('<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"><\\/script>');
+    }
+  </script>
   <script>
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
     const panelSingle = document.getElementById("panelSingle");
@@ -1255,6 +1334,7 @@
     const cycleChartPanel = document.getElementById("cycleChartPanel");
     const cycleChartWrap = document.getElementById("cycleChartWrap");
     const cycleMainCanvas = document.getElementById("cycleMainChart");
+    const cycleStructOverlay = document.getElementById("cycleStructOverlay");
     const cycleEventOverlay = document.getElementById("cycleEventOverlay");
     const cycleSubCanvas = document.getElementById("cycleSubChart");
     const cycleSubVolBtn = document.getElementById("cycleSubVol");
@@ -1271,6 +1351,7 @@
     const eventDetailTitleEl = document.getElementById("eventDetailTitle");
     const eventDetailMetaEl = document.getElementById("eventDetailMeta");
     const eventDetailContentEl = document.getElementById("eventDetailContent");
+    const eventDetailDeleteBtn = document.getElementById("eventDetailDelete");
     const eventDetailCloseBtn = document.getElementById("eventDetailClose");
     const eventModal = document.getElementById("eventModal");
     const eventModalCloseBtn = document.getElementById("eventModalClose");
@@ -1445,6 +1526,7 @@
       if (cycleDayInfoEl) {
         cycleDayInfoEl.textContent = "选中日期后展示当日开收盘、涨幅与主力净流入";
       }
+      if (cycleStructOverlay) cycleStructOverlay.innerHTML = "";
       if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
       renderEventList([]);
       cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
@@ -2692,6 +2774,7 @@
         lwSyncingRange = true;
         try {
           lwSubChart.timeScale().setVisibleLogicalRange(range);
+          cycleRenderStructureOverlay(currentReportData || {});
           cycleRenderEventMarkersLightweight();
         } catch (_) {
           // no-op
@@ -2703,6 +2786,7 @@
         lwSyncingRange = true;
         try {
           lwMainChart.timeScale().setVisibleLogicalRange(range);
+          cycleRenderStructureOverlay(currentReportData || {});
           cycleRenderEventMarkersLightweight();
         } catch (_) {
           // no-op
@@ -2711,6 +2795,102 @@
       });
 
       return true;
+    }
+
+    function cycleRenderStructureOverlay(reportData) {
+      if (!cycleStructOverlay) return;
+      cycleStructOverlay.innerHTML = "";
+      if (!lwMainChart || !lwCandleSeries) return;
+      const pivots = Array.isArray(reportData?.pivots) ? reportData.pivots : [];
+      const cycles = Array.isArray(reportData?.cycles) ? reportData.cycles : [];
+      if (!pivots.length) return;
+
+      const cssW = Math.max(280, cycleMainCanvas.clientWidth || 0);
+      const cssH = Math.max(120, cycleMainCanvas.clientHeight || 0);
+      const logicalRange = lwMainChart.timeScale().getVisibleLogicalRange?.() || null;
+      const leftLogical = logicalRange ? Math.floor(logicalRange.from) - 2 : -1e9;
+      const rightLogical = logicalRange ? Math.ceil(logicalRange.to) + 2 : 1e9;
+
+      const pts = pivots
+        .map((p, idx) => {
+          const tradeDate = String(p.trade_date || "");
+          const fallbackIdx = Number(p.idx ?? p.i ?? -1);
+          const row = lwCandleRows[fallbackIdx];
+          const time = tradeDate || String(row?.trade_date || "");
+          if (!time) return null;
+          const logical = lwDateToIdx.get(time);
+          if (logical === undefined || logical < leftLogical || logical > rightLogical) return null;
+          const x = lwMainChart.timeScale().timeToCoordinate?.(time);
+          const price = Number(p.price ?? row?.close ?? 0);
+          const y = lwCandleSeries.priceToCoordinate?.(price);
+          if (x === null || x === undefined || y === null || y === undefined) return null;
+          if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return null;
+          return {
+            _pivotIndex: idx,
+            x: Number(x),
+            y: Number(y),
+            type: String(p.type || "").toUpperCase(),
+            price,
+            logical,
+            time,
+          };
+        })
+        .filter(Boolean);
+      if (!pts.length) return;
+
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 2) continue;
+        const line = document.createElement("div");
+        line.className = "cycle-zz-line";
+        line.style.left = `${a.x}px`;
+        line.style.top = `${a.y}px`;
+        line.style.width = `${dist}px`;
+        line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+        cycleStructOverlay.appendChild(line);
+      }
+
+      pts.forEach((p) => {
+        const dot = document.createElement("div");
+        dot.className = `cycle-pivot-dot ${p.type === "H" ? "high" : "low"}`;
+        dot.style.left = `${Math.max(4, Math.min(cssW - 4, p.x))}px`;
+        dot.style.top = `${Math.max(4, Math.min(cssH - 4, p.y))}px`;
+        cycleStructOverlay.appendChild(dot);
+
+        const label = document.createElement("div");
+        label.className = "cycle-pivot-label";
+        label.textContent = `P${Number(p._pivotIndex) + 1}`;
+        label.style.left = `${Math.max(0, Math.min(cssW - 40, p.x))}px`;
+        label.style.top = `${Math.max(10, Math.min(cssH - 10, p.y))}px`;
+        cycleStructOverlay.appendChild(label);
+      });
+
+      cycles.forEach((seg) => {
+        const sDate = String(seg.start_date || "");
+        const eDate = String(seg.end_date || "");
+        const sLogical = lwDateToIdx.get(sDate);
+        const eLogical = lwDateToIdx.get(eDate);
+        if (sLogical === undefined || eLogical === undefined) return;
+        if (eLogical < leftLogical || sLogical > rightLogical) return;
+        const x1 = lwMainChart.timeScale().timeToCoordinate?.(sDate);
+        const x2 = lwMainChart.timeScale().timeToCoordinate?.(eDate);
+        const y1 = lwCandleSeries.priceToCoordinate?.(Number(seg.start_price ?? 0));
+        const y2 = lwCandleSeries.priceToCoordinate?.(Number(seg.end_price ?? 0));
+        if ([x1, x2, y1, y2].some((v) => v === null || v === undefined || !Number.isFinite(Number(v)))) return;
+        const mx = (Number(x1) + Number(x2)) / 2;
+        const my = (Number(y1) + Number(y2)) / 2 + (Number(y2) > Number(y1) ? -12 : 12);
+        const pct = Number(seg.chg_pct ?? 0);
+        const tag = document.createElement("div");
+        tag.className = `cycle-chg-tag ${pct >= 0 ? "rise" : "fall"}`;
+        tag.textContent = `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+        tag.style.left = `${Math.max(28, Math.min(cssW - 28, mx))}px`;
+        tag.style.top = `${Math.max(14, Math.min(cssH - 14, my))}px`;
+        cycleStructOverlay.appendChild(tag);
+      });
     }
 
     function cycleRenderEventMarkersLightweight() {
@@ -2850,6 +3030,7 @@
       if (!cycleEnsureLightweightCharts()) return;
       const candles = Array.isArray(reportData?.candles) ? reportData.candles : [];
       if (!candles.length) {
+        if (cycleStructOverlay) cycleStructOverlay.innerHTML = "";
         if (cycleEventOverlay) cycleEventOverlay.innerHTML = "";
         lwCandleRows = [];
         lwDateToIdx = new Map();
@@ -2910,6 +3091,7 @@
           latest.net_mf_amount
         );
       }
+      cycleRenderStructureOverlay(reportData);
       cycleRenderEventMarkersLightweight();
     }
 
@@ -3288,14 +3470,51 @@
       if (!eventDetailEl || !eventDetailTitleEl || !eventDetailMetaEl || !eventDetailContentEl) return;
       if (!item) {
         eventDetailEl.classList.add("hidden");
+        if (eventDetailDeleteBtn) {
+          eventDetailDeleteBtn.disabled = true;
+          eventDetailDeleteBtn.dataset.eventUuid = "";
+        }
         return;
       }
       eventDetailEl.classList.remove("hidden");
       eventDetailTitleEl.textContent = item.title || "-";
+      if (eventDetailDeleteBtn) {
+        eventDetailDeleteBtn.disabled = false;
+        eventDetailDeleteBtn.dataset.eventUuid = String(item.event_uuid || "");
+      }
       const scopeText = item.global_event ? "全局事件" : `关联 ${Array.isArray(item.ts_codes) ? item.ts_codes.length : 0} 只股票`;
       const tagsText = item.tags ? ` | 标签: ${item.tags}` : "";
       eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}`;
       eventDetailContentEl.textContent = item.content || "-";
+    }
+
+    async function deleteCycleEvent(eventUuid) {
+      const safeUuid = String(eventUuid || "").trim();
+      if (!safeUuid) return;
+      const hit = eventItems.find((x) => String(x.event_uuid || "") === safeUuid) || null;
+      const title = String(hit?.title || "该事件");
+      const yes = window.confirm(`确认删除事件「${title}」吗？删除后不可恢复。`);
+      if (!yes) return;
+      try {
+        if (eventDetailDeleteBtn) {
+          eventDetailDeleteBtn.disabled = true;
+          eventDetailDeleteBtn.textContent = "删除中...";
+        }
+        const resp = await fetch(`/api/cycle-events/${encodeURIComponent(safeUuid)}`, { method: "DELETE" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "delete event failed");
+        if (!data.deleted) throw new Error("事件不存在或已被删除");
+        activeEventUuid = "";
+        await loadEventsForCurrentReport();
+        cycleScheduleDraw();
+      } catch (e) {
+        window.alert(`删除失败：${String(e.message || e)}`);
+      } finally {
+        if (eventDetailDeleteBtn) {
+          eventDetailDeleteBtn.disabled = false;
+          eventDetailDeleteBtn.textContent = "删除";
+        }
+      }
     }
 
     function renderEventList(items) {
@@ -4270,6 +4489,12 @@
         activeEventUuid = "";
         renderEventList(eventItems);
         cycleScheduleDraw();
+      });
+    }
+    if (eventDetailDeleteBtn) {
+      eventDetailDeleteBtn.addEventListener("click", async () => {
+        const uuid = String(eventDetailDeleteBtn.dataset.eventUuid || activeEventUuid || "");
+        await deleteCycleEvent(uuid);
       });
     }
     if (eventModalCloseBtn) {

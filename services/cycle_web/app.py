@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -645,6 +645,25 @@ def _list_cycle_events(
             }
         )
     return out
+
+
+def _delete_cycle_event(*, event_uuid: str, mysql_cfg: dict) -> bool:
+    _ensure_cycle_event_tables(mysql_cfg)
+    safe_uuid = str(event_uuid or "").strip().lower()
+    if not safe_uuid:
+        raise HTTPException(status_code=400, detail="event_uuid is required")
+    if len(safe_uuid) != 32 or any(ch not in "0123456789abcdef" for ch in safe_uuid):
+        raise HTTPException(status_code=400, detail="event_uuid must be 32-char hex")
+
+    del_map_sql = "DELETE FROM cycle_event_asset WHERE event_uuid = %s"
+    del_event_sql = "DELETE FROM cycle_event WHERE event_uuid = %s"
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(del_map_sql, (safe_uuid,))
+            cursor.execute(del_event_sql, (safe_uuid,))
+            affected = int(cursor.rowcount or 0)
+        conn.commit()
+    return affected > 0
 
 
 def _ensure_market_breadth_tables(mysql_cfg: dict) -> None:
@@ -2717,6 +2736,31 @@ def create_cycle_event(
             mysql_cfg=mysql_cfg,
         )
         return {"ok": True, "item": item}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/api/cycle-events/{event_uuid}")
+def delete_cycle_event(
+    event_uuid: str = ApiPath(..., description="32-char event uuid"),
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    try:
+        deleted = _delete_cycle_event(event_uuid=event_uuid, mysql_cfg=mysql_cfg)
+        return {"ok": True, "event_uuid": event_uuid, "deleted": bool(deleted)}
     except HTTPException:
         raise
     except Exception as exc:
