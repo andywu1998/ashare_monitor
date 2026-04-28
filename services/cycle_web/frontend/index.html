@@ -292,6 +292,17 @@
       font-size: 12px;
       line-height: 1.4;
     }
+    .cycle-day-info {
+      margin-top: 8px;
+      margin-bottom: 6px;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.45;
+    }
     .report-table-wrap {
       margin-top: 8px;
       border: 1px solid #e2e8f0;
@@ -792,6 +803,7 @@
           <div id="reportContent" class="hidden">
             <div id="reportMeta" class="cycle-meta"></div>
             <div id="reportSummary" class="summary"></div>
+            <div id="cycleDayInfo" class="cycle-day-info">选中日期后展示当日开收盘、涨幅与主力净流入</div>
             <div id="cycleChartPanel" class="chart-card" style="margin-top:8px">
               <div id="cycleChartWrap" class="cycle-chart-wrap">
                 <div class="cycle-main-pane">
@@ -805,6 +817,11 @@
                 <button id="cycleSubVol" class="secondary active" type="button">成交量</button>
                 <button id="cycleSubAmount" class="secondary" type="button">成交额</button>
                 <button id="cycleSubPct" class="secondary" type="button">涨跌幅</button>
+                <button id="cycleSubMainNet" class="secondary" type="button">主力净流入</button>
+                <button id="cycleSubElgNet" class="secondary" type="button">超大单净流入</button>
+                <button id="cycleSubLgNet" class="secondary" type="button">大单净流入</button>
+                <button id="cycleSubMdNet" class="secondary" type="button">中单净流入</button>
+                <button id="cycleSubSmNet" class="secondary" type="button">小单净流入</button>
               </div>
               <div class="cycle-tools">
                 <button id="cycleZoomIn" class="secondary" type="button">放大</button>
@@ -895,6 +912,7 @@
     const reportContentEl = document.getElementById("reportContent");
     const reportMetaEl = document.getElementById("reportMeta");
     const reportSummaryEl = document.getElementById("reportSummary");
+    const cycleDayInfoEl = document.getElementById("cycleDayInfo");
     const cycleChartPanel = document.getElementById("cycleChartPanel");
     const cycleChartWrap = document.getElementById("cycleChartWrap");
     const cycleMainCanvas = document.getElementById("cycleMainCanvas");
@@ -902,6 +920,11 @@
     const cycleSubVolBtn = document.getElementById("cycleSubVol");
     const cycleSubAmountBtn = document.getElementById("cycleSubAmount");
     const cycleSubPctBtn = document.getElementById("cycleSubPct");
+    const cycleSubMainNetBtn = document.getElementById("cycleSubMainNet");
+    const cycleSubElgNetBtn = document.getElementById("cycleSubElgNet");
+    const cycleSubLgNetBtn = document.getElementById("cycleSubLgNet");
+    const cycleSubMdNetBtn = document.getElementById("cycleSubMdNet");
+    const cycleSubSmNetBtn = document.getElementById("cycleSubSmNet");
     const cycleTableBody = document.getElementById("cycleTableBody");
     const cycleZoomInBtn = document.getElementById("cycleZoomIn");
     const cycleZoomOutBtn = document.getElementById("cycleZoomOut");
@@ -920,6 +943,7 @@
     let reportRenderMode = "none";
     const cycleView = { left: 0, right: 0, minBars: 24 };
     let cycleDragActive = false;
+    let cycleDragMoved = false;
     let cycleDragStartX = 0;
     let cycleDragStartLeft = 0;
     let cycleDragStartRight = 0;
@@ -935,6 +959,7 @@
     let cycleInertiaRaf = 0;
     let cycleDrawRaf = 0;
     let cycleSubMode = "vol";
+    let cycleSelectedIdx = null;
     let suggestTimer = null;
     let activeSuggestBox = null;
 
@@ -1037,6 +1062,9 @@
       reportEmptyEl.classList.remove("hidden");
       reportContentEl.classList.add("hidden");
       reportSummaryEl.innerHTML = "";
+      if (cycleDayInfoEl) {
+        cycleDayInfoEl.textContent = "选中日期后展示当日开收盘、涨幅与主力净流入";
+      }
       cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
       updatePreviewMode("暂无数据");
       reportRenderMode = "none";
@@ -1139,10 +1167,12 @@
       if (!total) {
         cycleView.left = 0;
         cycleView.right = 0;
+        cycleSelectedIdx = null;
         return;
       }
       cycleView.left = 0;
       cycleView.right = total - 1;
+      cycleSelectedIdx = null;
       cycleClampView(total);
     }
 
@@ -1158,6 +1188,68 @@
       if (av >= 1e8) return `${(n / 1e8).toFixed(2)}亿`;
       if (av >= 1e4) return `${(n / 1e4).toFixed(2)}万`;
       return n.toFixed(2);
+    }
+
+    function cycleFormatMoneyWanTick(v) {
+      const n = Number(v || 0);
+      const av = Math.abs(n);
+      if (av >= 1e4) return `${(n / 1e4).toFixed(2)}亿`;
+      if (av >= 1) return `${n.toFixed(0)}万`;
+      return `${(n * 10000).toFixed(0)}元`;
+    }
+
+    function cycleFormatMoneyWanSigned(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "n/a";
+      const n = Number(v);
+      const sign = n > 0 ? "+" : "";
+      const av = Math.abs(n);
+      if (av >= 1e4) return `${sign}${(n / 1e4).toFixed(2)}亿`;
+      if (av >= 1) return `${sign}${n.toFixed(2)}万`;
+      return `${sign}${(n * 10000).toFixed(0)}元`;
+    }
+
+    function cycleFormatPrice(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "n/a";
+      return Number(v).toFixed(3);
+    }
+
+    function cycleFormatPct(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "n/a";
+      const n = Number(v);
+      const sign = n > 0 ? "+" : "";
+      return `${sign}${n.toFixed(2)}%`;
+    }
+
+    function cycleSetDayInfoText(dateText, openV, closeV, pctV, netV) {
+      if (!cycleDayInfoEl) return;
+      cycleDayInfoEl.textContent =
+        `${dateText || "-"} | 开盘 ${cycleFormatPrice(openV)} | 收盘 ${cycleFormatPrice(closeV)} | 涨幅 ${cycleFormatPct(pctV)} | 主力净流入 ${cycleFormatMoneyWanSigned(netV)}`;
+    }
+
+    function cycleSelectNearestByClientX(clientX, rect) {
+      const total = (currentReportData?.candles || []).length;
+      if (!total) return;
+      const rawIdx = Math.round(cycleIdxFromClientX(clientX, rect));
+      cycleSelectedIdx = Math.max(0, Math.min(total - 1, rawIdx));
+      cycleScheduleDraw();
+    }
+
+    function cycleSetSubMode(mode) {
+      cycleSubMode = mode;
+      const btnMap = {
+        vol: cycleSubVolBtn,
+        amount: cycleSubAmountBtn,
+        pct: cycleSubPctBtn,
+        mainNet: cycleSubMainNetBtn,
+        elgNet: cycleSubElgNetBtn,
+        lgNet: cycleSubLgNetBtn,
+        mdNet: cycleSubMdNetBtn,
+        smNet: cycleSubSmNetBtn,
+      };
+      Object.entries(btnMap).forEach(([k, btn]) => {
+        if (!btn) return;
+        btn.classList.toggle("active", k === mode);
+      });
     }
 
     function cycleDrawGrid(ctx, W, H, pad, yLabels, labelFormatter) {
@@ -1260,6 +1352,33 @@
       const pctChgs = candles.map((c) => Number(c.pct_chg ?? 0));
       const vols = candles.map((c) => Number(c.vol ?? 0));
       const amounts = candles.map((c) => Number(c.amount ?? 0));
+      const mainNetFlows = candles.map((c) =>
+        c.net_mf_amount === null || c.net_mf_amount === undefined ? null : Number(c.net_mf_amount)
+      );
+      const elgNetFlows = candles.map((c) => {
+        const buy = c.buy_elg_amount;
+        const sell = c.sell_elg_amount;
+        if ((buy === null || buy === undefined) && (sell === null || sell === undefined)) return null;
+        return Number(buy || 0) - Number(sell || 0);
+      });
+      const lgNetFlows = candles.map((c) => {
+        const buy = c.buy_lg_amount;
+        const sell = c.sell_lg_amount;
+        if ((buy === null || buy === undefined) && (sell === null || sell === undefined)) return null;
+        return Number(buy || 0) - Number(sell || 0);
+      });
+      const mdNetFlows = candles.map((c) => {
+        const buy = c.buy_md_amount;
+        const sell = c.sell_md_amount;
+        if ((buy === null || buy === undefined) && (sell === null || sell === undefined)) return null;
+        return Number(buy || 0) - Number(sell || 0);
+      });
+      const smNetFlows = candles.map((c) => {
+        const buy = c.buy_sm_amount;
+        const sell = c.sell_sm_amount;
+        if ((buy === null || buy === undefined) && (sell === null || sell === undefined)) return null;
+        return Number(buy || 0) - Number(sell || 0);
+      });
       const preCloses = closes.map((v, i) => (i > 0 ? closes[i - 1] : opens[i]));
       const changes = closes.map((v, i) => v - preCloses[i]);
       const dates = candles.map((c) => String(c.trade_date || ""));
@@ -1353,18 +1472,61 @@
         mainPad.t - 6
       );
 
+      const safeSelected = cycleSelectedIdx === null
+        ? null
+        : Math.max(0, Math.min(candles.length - 1, Math.round(Number(cycleSelectedIdx))));
+      const infoIdx = safeSelected === null ? rightIdx : safeSelected;
+      if (safeSelected !== null && safeSelected >= leftIdx && safeSelected <= rightIdx) {
+        const xSel = xOf(safeSelected);
+        mainCtx.strokeStyle = "rgba(15,23,42,0.65)";
+        mainCtx.lineWidth = 1;
+        mainCtx.setLineDash([5, 4]);
+        mainCtx.beginPath();
+        mainCtx.moveTo(xSel, mainPad.t);
+        mainCtx.lineTo(xSel, mainCssH - mainPad.b);
+        mainCtx.stroke();
+        mainCtx.setLineDash([]);
+      }
+      cycleSetDayInfoText(
+        dates[infoIdx],
+        opens[infoIdx],
+        closes[infoIdx],
+        pctChgs[infoIdx],
+        mainNetFlows[infoIdx]
+      );
+
       subCtx.fillStyle = "#fff";
       subCtx.fillRect(0, 0, cssW, subCssH);
       const vals = [];
+      const isNetMode =
+        cycleSubMode === "mainNet" ||
+        cycleSubMode === "elgNet" ||
+        cycleSubMode === "lgNet" ||
+        cycleSubMode === "mdNet" ||
+        cycleSubMode === "smNet";
       for (let i = leftIdx; i <= rightIdx; i++) {
-        if (cycleSubMode === "vol") vals.push(vols[i] || 0);
-        else if (cycleSubMode === "amount") vals.push(amounts[i] || 0);
-        else vals.push(pctChgs[i] || 0);
+        let v = null;
+        if (cycleSubMode === "vol") v = vols[i] || 0;
+        else if (cycleSubMode === "amount") v = amounts[i] || 0;
+        else if (cycleSubMode === "pct") v = pctChgs[i] || 0;
+        else if (cycleSubMode === "mainNet") v = mainNetFlows[i];
+        else if (cycleSubMode === "elgNet") v = elgNetFlows[i];
+        else if (cycleSubMode === "lgNet") v = lgNetFlows[i];
+        else if (cycleSubMode === "mdNet") v = mdNetFlows[i];
+        else if (cycleSubMode === "smNet") v = smNetFlows[i];
+        if (v !== null && v !== undefined && Number.isFinite(Number(v))) vals.push(Number(v));
       }
+      const hasVals = vals.length > 0;
       let subMin = 0;
-      let subMax = Math.max(...vals, 0);
-      if (cycleSubMode === "pct") {
+      let subMax = 0;
+      if (!hasVals) {
+        subMin = -1;
+        subMax = 1;
+      } else if (cycleSubMode === "pct" || isNetMode) {
         subMin = Math.min(...vals, 0);
+        subMax = Math.max(...vals, 0);
+      } else {
+        subMin = 0;
         subMax = Math.max(...vals, 0);
       }
       const subPadVal = Math.max((subMax - subMin) * 0.1, Math.abs(subMax) * 0.04, 1e-6);
@@ -1375,6 +1537,7 @@
       cycleDrawGrid(subCtx, cssW, subCssH, subPad, 4, (k) => {
         const cur = subMax - k * (subMax - subMin);
         if (cycleSubMode === "pct") return `${cur.toFixed(2)}%`;
+        if (isNetMode) return cycleFormatMoneyWanTick(cur);
         return cycleFormatLarge(cur);
       });
 
@@ -1383,6 +1546,30 @@
         for (let i = leftIdx; i <= rightIdx; i++) pctPts.push([subX(i), subY(pctChgs[i] || 0)]);
         cycleLine(subCtx, pctPts, "#2563eb", mobile ? 1.5 : 1.8);
         const y0 = subY(0);
+        subCtx.strokeStyle = "#94a3b8";
+        subCtx.setLineDash([4, 3]);
+        subCtx.beginPath();
+        subCtx.moveTo(subPad.l, y0);
+        subCtx.lineTo(cssW - subPad.r, y0);
+        subCtx.stroke();
+        subCtx.setLineDash([]);
+      } else if (isNetMode) {
+        const subStep = subCw / Math.max(1, bars);
+        const bw = Math.max(1, Math.min(10, subStep * 0.62));
+        const y0 = subY(0);
+        for (let i = leftIdx; i <= rightIdx; i++) {
+          let value = null;
+          if (cycleSubMode === "mainNet") value = mainNetFlows[i];
+          else if (cycleSubMode === "elgNet") value = elgNetFlows[i];
+          else if (cycleSubMode === "lgNet") value = lgNetFlows[i];
+          else if (cycleSubMode === "mdNet") value = mdNetFlows[i];
+          else value = smNetFlows[i];
+          if (value === null || value === undefined || !Number.isFinite(Number(value))) continue;
+          const x = subX(i);
+          const y = subY(Number(value));
+          subCtx.fillStyle = Number(value) >= 0 ? "rgba(220,38,38,0.82)" : "rgba(5,150,105,0.82)";
+          subCtx.fillRect(x - bw / 2, Math.min(y, y0), bw, Math.max(1, Math.abs(y0 - y)));
+        }
         subCtx.strokeStyle = "#94a3b8";
         subCtx.setLineDash([4, 3]);
         subCtx.beginPath();
@@ -1404,6 +1591,18 @@
         }
       }
 
+      if (safeSelected !== null && safeSelected >= leftIdx && safeSelected <= rightIdx) {
+        const xSel = subX(safeSelected);
+        subCtx.strokeStyle = "rgba(15,23,42,0.65)";
+        subCtx.lineWidth = 1;
+        subCtx.setLineDash([5, 4]);
+        subCtx.beginPath();
+        subCtx.moveTo(xSel, subPad.t);
+        subCtx.lineTo(xSel, subCssH - subPad.b);
+        subCtx.stroke();
+        subCtx.setLineDash([]);
+      }
+
       const ticks = Math.max(3, Math.min(8, Math.floor(cssW / 100)));
       subCtx.fillStyle = "#64748b";
       subCtx.font = mobile ? "10px sans-serif" : "12px sans-serif";
@@ -1413,7 +1612,17 @@
         const txt = mobile ? dates[idx].slice(5) : dates[idx];
         subCtx.fillText(txt, x - (mobile ? 16 : 30), subCssH - 10);
       }
-      const subTitle = cycleSubMode === "vol" ? "成交量(手)" : (cycleSubMode === "amount" ? "成交额(千元)" : "涨跌幅(%)");
+      const subTitleMap = {
+        vol: "成交量(手)",
+        amount: "成交额(千元)",
+        pct: "涨跌幅(%)",
+        mainNet: "主力净流入(万元)",
+        elgNet: "超大单净流入(万元)",
+        lgNet: "大单净流入(万元)",
+        mdNet: "中单净流入(万元)",
+        smNet: "小单净流入(万元)",
+      };
+      const subTitle = subTitleMap[cycleSubMode] || "成交量(手)";
       subCtx.fillStyle = "#475569";
       subCtx.font = mobile ? "10px sans-serif" : "11px sans-serif";
       subCtx.fillText(subTitle, subPad.l + 4, subPad.t - 4);
@@ -1509,6 +1718,14 @@
       if (!cycleMainCanvas || !cycleSubCanvas) return;
       const redraw = () => cycleScheduleDraw();
       const bindGestureEvents = (canvas) => {
+        const LONG_PRESS_MS = 220;
+        const PAN_START_PX = 8;
+        let touchMode = "none"; // none | pending | pan | select | pinch
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchRect = null;
+        let touchPendingTimer = 0;
+
         canvas.addEventListener("touchstart", (e) => {
           if (reportRenderMode !== "json") return;
           const total = (currentReportData?.candles || []).length;
@@ -1521,10 +1738,27 @@
             cyclePinchAnchor = cycleIdxFromClientX((e.touches[0].clientX + e.touches[1].clientX) / 2, rect);
             cyclePanLastX = null;
             cyclePanLastTs = 0;
+            if (touchPendingTimer) {
+              clearTimeout(touchPendingTimer);
+              touchPendingTimer = 0;
+            }
+            touchMode = "pinch";
           } else if (e.touches.length === 1) {
+            const t = e.touches[0];
             cyclePanLastX = e.touches[0].clientX;
             cyclePanLastTs = performance.now();
             cyclePanVelocity = 0;
+            touchStartX = Number(t.clientX || 0);
+            touchStartY = Number(t.clientY || 0);
+            touchRect = rect;
+            touchMode = "pending";
+            if (touchPendingTimer) clearTimeout(touchPendingTimer);
+            touchPendingTimer = setTimeout(() => {
+              if (touchMode !== "pending") return;
+              touchMode = "select";
+              cyclePanVelocity = 0;
+              cycleSelectNearestByClientX(touchStartX, touchRect);
+            }, LONG_PRESS_MS);
           }
         }, { passive: true });
 
@@ -1533,6 +1767,11 @@
           const total = (currentReportData?.candles || []).length;
           if (!total) return;
           if (e.touches.length === 2 && cyclePinchDist > 0) {
+            if (touchPendingTimer) {
+              clearTimeout(touchPendingTimer);
+              touchPendingTimer = 0;
+            }
+            touchMode = "pinch";
             e.preventDefault();
             const curDist = cycleTouchDistance(e.touches[0], e.touches[1]);
             const scale = cyclePinchDist / Math.max(1, curDist);
@@ -1545,11 +1784,31 @@
           } else if (e.touches.length === 1 && cyclePanLastX != null) {
             e.preventDefault();
             const x = e.touches[0].clientX;
+            const y = Number(e.touches[0].clientY || 0);
             const dx = x - cyclePanLastX;
             cyclePanLastX = x;
             const now = performance.now();
             const dt = Math.max(1, now - cyclePanLastTs);
             cyclePanLastTs = now;
+            if (touchMode === "pending") {
+              const dtx = Number(x) - touchStartX;
+              const dty = y - touchStartY;
+              if (Math.sqrt(dtx * dtx + dty * dty) > PAN_START_PX) {
+                touchMode = "pan";
+                if (touchPendingTimer) {
+                  clearTimeout(touchPendingTimer);
+                  touchPendingTimer = 0;
+                }
+              }
+            }
+            if (touchMode === "select") {
+              cyclePanVelocity = 0;
+              cycleSelectNearestByClientX(x, touchRect || canvas.getBoundingClientRect());
+              return;
+            }
+            if (touchMode === "pending") {
+              return;
+            }
             const barsPerPx = (cycleView.right - cycleView.left) / Math.max(1, canvas.clientWidth);
             const deltaIdx = -dx * barsPerPx;
             cyclePanBy(deltaIdx, total);
@@ -1559,17 +1818,30 @@
         }, { passive: false });
 
         canvas.addEventListener("touchend", (e) => {
+          if (touchPendingTimer) {
+            clearTimeout(touchPendingTimer);
+            touchPendingTimer = 0;
+          }
           if (!e.touches || e.touches.length < 2) cyclePinchDist = 0;
           if (!e.touches || e.touches.length === 0) {
+            if (touchMode === "pending" && e.changedTouches && e.changedTouches.length === 1) {
+              cycleSelectNearestByClientX(e.changedTouches[0].clientX, touchRect || canvas.getBoundingClientRect());
+            }
             cyclePanLastX = null;
-            if (Math.abs(cyclePanVelocity) > 0.02) cycleStartInertia();
+            if (touchMode === "pan" && Math.abs(cyclePanVelocity) > 0.02) cycleStartInertia();
+            touchMode = "none";
           }
         });
 
         canvas.addEventListener("touchcancel", () => {
+          if (touchPendingTimer) {
+            clearTimeout(touchPendingTimer);
+            touchPendingTimer = 0;
+          }
           cyclePinchDist = 0;
           cyclePanLastX = null;
-          cycleStartInertia();
+          if (touchMode === "pan") cycleStartInertia();
+          touchMode = "none";
         });
 
         canvas.addEventListener("gesturestart", (e) => {
@@ -1628,9 +1900,20 @@
           if (e.button !== 0) return;
           cycleStopInertia();
           cycleDragActive = true;
+          cycleDragMoved = false;
           cycleDragStartX = e.clientX;
           cycleDragStartLeft = cycleView.left;
           cycleDragStartRight = cycleView.right;
+        });
+
+        canvas.addEventListener("click", (e) => {
+          if (reportRenderMode !== "json") return;
+          if (cycleDragMoved) {
+            cycleDragMoved = false;
+            return;
+          }
+          const rect = canvas.getBoundingClientRect();
+          cycleSelectNearestByClientX(e.clientX, rect);
         });
       };
 
@@ -1662,6 +1945,7 @@
         if (!total) return;
         const rect = cycleMainCanvas.getBoundingClientRect();
         const span = cycleDragStartRight - cycleDragStartLeft;
+        if (Math.abs(e.clientX - cycleDragStartX) > 3) cycleDragMoved = true;
         const deltaIdx = ((e.clientX - cycleDragStartX) / Math.max(1, rect.width)) * span;
         cycleSetView(cycleDragStartLeft - deltaIdx, cycleDragStartRight - deltaIdx, total);
         redraw();
@@ -1671,27 +1955,24 @@
         cycleDragActive = false;
       });
 
-      cycleSubVolBtn.addEventListener("click", () => {
-        cycleSubMode = "vol";
-        cycleSubVolBtn.classList.add("active");
-        cycleSubAmountBtn.classList.remove("active");
-        cycleSubPctBtn.classList.remove("active");
-        redraw();
-      });
-      cycleSubAmountBtn.addEventListener("click", () => {
-        cycleSubMode = "amount";
-        cycleSubVolBtn.classList.remove("active");
-        cycleSubAmountBtn.classList.add("active");
-        cycleSubPctBtn.classList.remove("active");
-        redraw();
-      });
-      cycleSubPctBtn.addEventListener("click", () => {
-        cycleSubMode = "pct";
-        cycleSubVolBtn.classList.remove("active");
-        cycleSubAmountBtn.classList.remove("active");
-        cycleSubPctBtn.classList.add("active");
-        redraw();
-      });
+      cycleSubVolBtn.addEventListener("click", () => { cycleSetSubMode("vol"); redraw(); });
+      cycleSubAmountBtn.addEventListener("click", () => { cycleSetSubMode("amount"); redraw(); });
+      cycleSubPctBtn.addEventListener("click", () => { cycleSetSubMode("pct"); redraw(); });
+      if (cycleSubMainNetBtn) {
+        cycleSubMainNetBtn.addEventListener("click", () => { cycleSetSubMode("mainNet"); redraw(); });
+      }
+      if (cycleSubElgNetBtn) {
+        cycleSubElgNetBtn.addEventListener("click", () => { cycleSetSubMode("elgNet"); redraw(); });
+      }
+      if (cycleSubLgNetBtn) {
+        cycleSubLgNetBtn.addEventListener("click", () => { cycleSetSubMode("lgNet"); redraw(); });
+      }
+      if (cycleSubMdNetBtn) {
+        cycleSubMdNetBtn.addEventListener("click", () => { cycleSetSubMode("mdNet"); redraw(); });
+      }
+      if (cycleSubSmNetBtn) {
+        cycleSubSmNetBtn.addEventListener("click", () => { cycleSetSubMode("smNet"); redraw(); });
+      }
 
       cycleMainCanvas.addEventListener("dblclick", () => {
         cycleResetView(currentReportData || {});

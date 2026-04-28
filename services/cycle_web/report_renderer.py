@@ -24,9 +24,9 @@ _ENV = Environment(
 )
 
 
-def _num(v: Optional[float], digits: int = 4) -> float:
+def _num(v: Optional[float], digits: int = 4, *, none_as_zero: bool = True) -> Optional[float]:
     if v is None:
-        return 0.0
+        return 0.0 if none_as_zero else None
     return round(float(v), digits)
 
 
@@ -53,6 +53,15 @@ def build_cycle_payload(
                 "pct_chg": _num(row.get("pct_chg")),
                 "vol": _num(row.get("vol")),
                 "amount": _num(row.get("amount")),
+                "buy_sm_amount": _num(row.get("buy_sm_amount"), none_as_zero=False),
+                "sell_sm_amount": _num(row.get("sell_sm_amount"), none_as_zero=False),
+                "buy_md_amount": _num(row.get("buy_md_amount"), none_as_zero=False),
+                "sell_md_amount": _num(row.get("sell_md_amount"), none_as_zero=False),
+                "buy_lg_amount": _num(row.get("buy_lg_amount"), none_as_zero=False),
+                "sell_lg_amount": _num(row.get("sell_lg_amount"), none_as_zero=False),
+                "buy_elg_amount": _num(row.get("buy_elg_amount"), none_as_zero=False),
+                "sell_elg_amount": _num(row.get("sell_elg_amount"), none_as_zero=False),
+                "net_mf_amount": _num(row.get("net_mf_amount"), none_as_zero=False),
             }
         )
 
@@ -158,4 +167,3 @@ def render_cycle_report_html(
         report_data_json=json.dumps(report_data, ensure_ascii=False),
         template_version=safe_ver,
     )
-

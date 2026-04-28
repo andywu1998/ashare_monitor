@@ -2032,7 +2032,11 @@ def _fetch_daily_by_asset_type(
 ) -> list[dict]:
     safe_type = (asset_type or "E").strip().upper()
     sql = """
-    SELECT trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount
+    SELECT
+      trade_date, open, high, low, close, pre_close, `change`, pct_chg, vol, amount,
+      buy_sm_amount, sell_sm_amount, buy_md_amount, sell_md_amount,
+      buy_lg_amount, sell_lg_amount, buy_elg_amount, sell_elg_amount,
+      net_mf_amount
     FROM stock_daily
     WHERE ts_code = %s
       AND asset_type = %s
@@ -2067,6 +2071,15 @@ def _fetch_daily_by_asset_type(
                 "pct_chg": float(row.get("pct_chg")) if row.get("pct_chg") is not None else None,
                 "vol": float(row.get("vol")) if row.get("vol") is not None else None,
                 "amount": float(row.get("amount")) if row.get("amount") is not None else None,
+                "buy_sm_amount": float(row.get("buy_sm_amount")) if row.get("buy_sm_amount") is not None else None,
+                "sell_sm_amount": float(row.get("sell_sm_amount")) if row.get("sell_sm_amount") is not None else None,
+                "buy_md_amount": float(row.get("buy_md_amount")) if row.get("buy_md_amount") is not None else None,
+                "sell_md_amount": float(row.get("sell_md_amount")) if row.get("sell_md_amount") is not None else None,
+                "buy_lg_amount": float(row.get("buy_lg_amount")) if row.get("buy_lg_amount") is not None else None,
+                "sell_lg_amount": float(row.get("sell_lg_amount")) if row.get("sell_lg_amount") is not None else None,
+                "buy_elg_amount": float(row.get("buy_elg_amount")) if row.get("buy_elg_amount") is not None else None,
+                "sell_elg_amount": float(row.get("sell_elg_amount")) if row.get("sell_elg_amount") is not None else None,
+                "net_mf_amount": float(row.get("net_mf_amount")) if row.get("net_mf_amount") is not None else None,
             }
         )
     return out
