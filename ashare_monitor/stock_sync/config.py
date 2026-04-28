@@ -1,12 +1,34 @@
 import os
 from pathlib import Path
+import shlex
+import subprocess
 
-from dotenv import load_dotenv
+def load_env_from_zshrc(override: bool = False) -> None:
+    zshrc = Path.home() / ".zshrc"
+    if not zshrc.exists():
+        return
+    try:
+        cmd = [
+            "zsh",
+            "-lc",
+            f"source {shlex.quote(str(zshrc))} >/dev/null 2>&1; env -0",
+        ]
+        proc = subprocess.run(cmd, check=True, capture_output=True)
+    except Exception:
+        return
+    for chunk in proc.stdout.split(b"\x00"):
+        if not chunk or b"=" not in chunk:
+            continue
+        key_bytes, value_bytes = chunk.split(b"=", 1)
+        key = key_bytes.decode("utf-8", errors="ignore")
+        if not key:
+            continue
+        value = value_bytes.decode("utf-8", errors="ignore")
+        if override or key not in os.environ:
+            os.environ[key] = value
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-SYNC_ENV = ROOT_DIR / "configs" / "stock_sync.env"
-load_dotenv(SYNC_ENV, override=False)
+load_env_from_zshrc(override=False)
 
 
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")

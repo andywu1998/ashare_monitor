@@ -292,6 +292,39 @@
       overflow: hidden;
       text-overflow: ellipsis;
       box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+      z-index: 9;
+    }
+    .cycle-event-link {
+      position: absolute;
+      height: 1.5px;
+      background: rgba(148, 163, 184, 0.8);
+      transform-origin: 0 50%;
+      pointer-events: none;
+      z-index: 7;
+    }
+    .cycle-event-link.global {
+      background: rgba(37, 99, 235, 0.65);
+    }
+    .cycle-event-link.active {
+      background: #2563eb;
+      height: 2px;
+    }
+    .cycle-event-anchor {
+      position: absolute;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(148, 163, 184, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 8;
+    }
+    .cycle-event-anchor.global {
+      background: rgba(37, 99, 235, 0.72);
+    }
+    .cycle-event-anchor.active {
+      background: #2563eb;
     }
     .cycle-event-mini.global::before {
       content: "● ";
@@ -1702,9 +1735,37 @@
         mini.className = `cycle-event-mini ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
         mini.textContent = item.title ? (item.title.length > 10 ? `${item.title.slice(0, 10)}...` : item.title) : "(无标题)";
         mini.style.left = `${leftPx}px`;
-        mini.style.top = `${Math.min(mainCssH - 26, topPx)}px`;
+        const miniTop = Math.min(mainCssH - 26, topPx);
+        mini.style.top = `${miniTop}px`;
         mini.dataset.eventUuid = item.event_uuid || "";
         mini.title = `${item.global_event ? "全局事件 | " : ""}${item.title || ""}`;
+        cycleEventOverlay.appendChild(mini);
+
+        const miniW = mini.offsetWidth || 96;
+        const miniH = mini.offsetHeight || 24;
+        const startX = leftPx + miniW / 2;
+        const startY = miniTop + miniH;
+        const candleY = yOf(Number(highs[idx] || 0));
+        const targetX = Math.max(6, Math.min(cssW - 6, leftPxRaw));
+        const targetY = Math.max(mainPad.t + 8, Math.min(mainCssH - 6, candleY - 6));
+        const dx = targetX - startX;
+        const dy = targetY - startY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 3) {
+          const link = document.createElement("div");
+          link.className = `cycle-event-link ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+          link.style.left = `${startX}px`;
+          link.style.top = `${startY}px`;
+          link.style.width = `${dist}px`;
+          link.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+          cycleEventOverlay.insertBefore(link, mini);
+        }
+        const anchor = document.createElement("div");
+        anchor.className = `cycle-event-anchor ${item.global_event ? "global" : ""} ${item.event_uuid === activeEventUuid ? "active" : ""}`;
+        anchor.style.left = `${targetX}px`;
+        anchor.style.top = `${targetY}px`;
+        cycleEventOverlay.insertBefore(anchor, mini);
+
         mini.addEventListener("click", (e) => {
           e.stopPropagation();
           const uuid = mini.dataset.eventUuid || "";
@@ -1714,7 +1775,6 @@
           renderEventDetail(hit);
           cycleScheduleDraw();
         });
-        cycleEventOverlay.appendChild(mini);
       });
 
       const active = eventItems.find((x) => x.event_uuid === activeEventUuid);

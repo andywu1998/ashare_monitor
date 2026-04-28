@@ -130,26 +130,87 @@ def get_thread_tushare_pro():
 def rows_from_kline_df(ts_code: str, df: pd.DataFrame) -> list[tuple]:
     if df is None or df.empty:
         return []
-    rows = []
+    parsed = []
     for row in df.itertuples(index=False):
-        trade_date = parse_date(getattr(row, "trade_date", None) or getattr(row, "日期", None) or getattr(row, "date", None))
+        trade_date = parse_date(
+            getattr(row, "trade_date", None)
+            or getattr(row, "日期", None)
+            or getattr(row, "date", None)
+        )
         if trade_date is None:
             continue
-        open_px = pd.to_numeric(getattr(row, "open", None) or getattr(row, "开盘", None), errors="coerce")
-        high_px = pd.to_numeric(getattr(row, "high", None) or getattr(row, "最高", None), errors="coerce")
-        low_px = pd.to_numeric(getattr(row, "low", None) or getattr(row, "最低", None), errors="coerce")
-        close_px = pd.to_numeric(getattr(row, "close", None) or getattr(row, "收盘", None), errors="coerce")
-        vol = pd.to_numeric(getattr(row, "vol", None) or getattr(row, "volume", None) or getattr(row, "成交量", None), errors="coerce")
-        amount = pd.to_numeric(getattr(row, "amount", None) or getattr(row, "成交额", None), errors="coerce")
-        pre_close = pd.to_numeric(getattr(row, "pre_close", None), errors="coerce")
-        change = pd.to_numeric(getattr(row, "change", None) or getattr(row, "涨跌额", None), errors="coerce")
-        pct_chg = pd.to_numeric(getattr(row, "pct_chg", None) or getattr(row, "涨跌幅", None), errors="coerce")
+        parsed.append(
+            {
+                "trade_date": trade_date,
+                "open_px": pd.to_numeric(
+                    getattr(row, "open", None) or getattr(row, "开盘", None),
+                    errors="coerce",
+                ),
+                "high_px": pd.to_numeric(
+                    getattr(row, "high", None) or getattr(row, "最高", None),
+                    errors="coerce",
+                ),
+                "low_px": pd.to_numeric(
+                    getattr(row, "low", None) or getattr(row, "最低", None),
+                    errors="coerce",
+                ),
+                "close_px": pd.to_numeric(
+                    getattr(row, "close", None) or getattr(row, "收盘", None),
+                    errors="coerce",
+                ),
+                "vol": pd.to_numeric(
+                    getattr(row, "vol", None)
+                    or getattr(row, "volume", None)
+                    or getattr(row, "成交量", None),
+                    errors="coerce",
+                ),
+                "amount": pd.to_numeric(
+                    getattr(row, "amount", None) or getattr(row, "成交额", None),
+                    errors="coerce",
+                ),
+                "pre_close": pd.to_numeric(
+                    getattr(row, "pre_close", None), errors="coerce"
+                ),
+                "change": pd.to_numeric(
+                    getattr(row, "change", None) or getattr(row, "涨跌额", None),
+                    errors="coerce",
+                ),
+                "pct_chg": pd.to_numeric(
+                    getattr(row, "pct_chg", None) or getattr(row, "涨跌幅", None),
+                    errors="coerce",
+                ),
+            }
+        )
+
+    parsed.sort(key=lambda x: x["trade_date"])
+
+    rows = []
+    prev_close_px = None
+    for item in parsed:
+        trade_date = item["trade_date"]
+        open_px = item["open_px"]
+        high_px = item["high_px"]
+        low_px = item["low_px"]
+        close_px = item["close_px"]
+        vol = item["vol"]
+        amount = item["amount"]
+        pre_close = item["pre_close"]
+        change = item["change"]
+        pct_chg = item["pct_chg"]
 
         if pd.notna(close_px) and pd.isna(pre_close):
-            pre_close = close_px - change if pd.notna(change) else None
+            if pd.notna(change):
+                pre_close = close_px - change
+            elif prev_close_px is not None:
+                pre_close = prev_close_px
         if pd.notna(close_px) and pd.notna(pre_close) and pd.isna(change):
             change = close_px - pre_close
-        if pd.notna(close_px) and pd.notna(pre_close) and pre_close not in (0, 0.0) and pd.isna(pct_chg):
+        if (
+            pd.notna(close_px)
+            and pd.notna(pre_close)
+            and pre_close not in (0, 0.0)
+            and pd.isna(pct_chg)
+        ):
             pct_chg = (close_px / pre_close - 1.0) * 100
 
         rows.append(
@@ -175,7 +236,10 @@ def rows_from_kline_df(ts_code: str, df: pd.DataFrame) -> list[tuple]:
                 None,
             )
         )
-    rows.sort(key=lambda x: x[1])
+
+        if pd.notna(close_px):
+            prev_close_px = float(close_px)
+
     return rows
 
 

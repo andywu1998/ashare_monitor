@@ -20,6 +20,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from ashare_monitor.stock_sync.config import load_env_from_zshrc
+
+load_env_from_zshrc(override=False)
+
 
 TZ = ZoneInfo("Asia/Shanghai")
 

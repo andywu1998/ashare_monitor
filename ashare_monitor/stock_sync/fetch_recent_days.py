@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import tushare as ts
+from pandas.errors import EmptyDataError
 
 from .config import TUSHARE_TOKEN
 from .db import (
@@ -82,12 +83,23 @@ def get_thread_pro():
     return pro
 
 
-def call_with_retry(api_func, **kwargs):
+def call_with_retry(api_func, allow_empty_on_parse_error: bool = False, **kwargs):
     for attempt in range(1, MAX_API_RETRIES + 1):
         try:
             return api_func(**kwargs)
         except Exception as exc:
             message = str(exc)
+            is_empty_parse = isinstance(exc, EmptyDataError) or "No columns to parse from file" in message
+            if is_empty_parse:
+                if attempt < MAX_API_RETRIES:
+                    log(
+                        f"empty_parse_retry attempt={attempt}/{MAX_API_RETRIES} sleep={GENERAL_RETRY_SLEEP_SECONDS}s kwargs={kwargs}"
+                    )
+                    time.sleep(GENERAL_RETRY_SLEEP_SECONDS)
+                    continue
+                if allow_empty_on_parse_error:
+                    log(f"empty_parse_fallback kwargs={kwargs}")
+                    return pd.DataFrame()
             if "频率超限" in message and attempt < MAX_API_RETRIES:
                 log(
                     f"rate_limited attempt={attempt}/{MAX_API_RETRIES} sleep={RATE_LIMIT_SLEEP_SECONDS}s kwargs={kwargs}"
@@ -170,6 +182,7 @@ def resolve_trade_window(
 def fetch_daily_rows(pro, ts_code: str, start_date: date, end_date: date):
     df = call_with_retry(
         pro.daily,
+        allow_empty_on_parse_error=True,
         ts_code=ts_code,
         start_date=start_date.strftime("%Y%m%d"),
         end_date=end_date.strftime("%Y%m%d"),
@@ -181,6 +194,7 @@ def fetch_daily_rows(pro, ts_code: str, start_date: date, end_date: date):
     try:
         mf_df = call_with_retry(
             pro.moneyflow,
+            allow_empty_on_parse_error=True,
             ts_code=ts_code,
             start_date=start_date.strftime("%Y%m%d"),
             end_date=end_date.strftime("%Y%m%d"),

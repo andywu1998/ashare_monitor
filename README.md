@@ -37,8 +37,7 @@ ashare_monitor/
 │   ├── config.example.toml
 │   ├── config.toml
 │   ├── config.legacy.yml
-│   ├── stock_sync.env.example
-│   └── stock_sync.env             # 本地私有，已加入 .gitignore
+│   └── stock_sync.env.example     # 仅保留模板，不再作为默认加载源
 ├── reports/
 ├── docs/
 ├── start_service.sh
@@ -76,10 +75,27 @@ cp configs/config.example.toml configs/config.toml
 ### 2) 股票同步配置（ENV）
 
 ```bash
-cp configs/stock_sync.env.example configs/stock_sync.env
+vim ~/.zshrc
 ```
 
-`configs/stock_sync.env` 关键字段：
+在 `~/.zshrc` 中配置以下变量（示例）：
+
+```bash
+export TUSHARE_TOKEN="your_tushare_token"
+export MYSQL_HOST="127.0.0.1"
+export MYSQL_PORT="3306"
+export MYSQL_USER="myuser"
+export MYSQL_PASSWORD="YOUR_MYSQL_PASSWORD"
+export MYSQL_DATABASE="mydb"
+```
+
+使配置生效：
+
+```bash
+source ~/.zshrc
+```
+
+关键字段：
 
 - `TUSHARE_TOKEN`
 - `MYSQL_HOST`
@@ -115,7 +131,7 @@ python3 scripts/run_cycle_report.py \
 
 ### 4) 股票数据同步（Tushare -> MySQL）
 
-同步模块会默认读取 `configs/stock_sync.env`。
+同步模块会默认读取 `~/.zshrc` 中的环境变量（`TUSHARE_TOKEN` + `MYSQL_*`）。
 
 单只股票（代码在 `ashare_monitor/stock_sync/fetch_one.py` 的 `TARGET_TS_CODE`）：
 
