@@ -885,6 +885,7 @@
             <button class="tab-btn" data-tab="fundSingle">基金周期分析服务</button>
             <button class="tab-btn" data-tab="fundUptrend">上行周期基金筛选</button>
             <button class="tab-btn" data-tab="breadth">历史涨跌统计</button>
+            <button class="tab-btn" data-tab="factorLab">因子与回测</button>
           </div>
 
           <div id="panelSingle" class="tab-panel active">
@@ -1189,6 +1190,164 @@
             </div>
           </div>
 
+          <div id="panelFactorLab" class="tab-panel">
+            <div class="section-title">每日增量因子</div>
+            <div class="grid">
+              <div>
+                <label>start-date (可选)</label>
+                <input id="factorStartDate" type="date" />
+              </div>
+              <div>
+                <label>end-date (可选)</label>
+                <input id="factorEndDate" type="date" />
+              </div>
+              <div>
+                <label>top-k / 交易日</label>
+                <input id="factorTopK" type="number" step="1" value="50" />
+              </div>
+              <div>
+                <label>min-list-days</label>
+                <input id="factorMinListDays" type="number" step="1" value="60" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="factorRunBtn">运行增量因子</button>
+              <button id="factorClearBtn" class="secondary" type="button">清空列表</button>
+              <span id="factorStatus" class="muted">等待执行</span>
+            </div>
+            <div id="factorError" class="error"></div>
+            <div id="factorMeta" class="uptrend-meta"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>交易日</th>
+                    <th>排名</th>
+                    <th>股票</th>
+                    <th>代码</th>
+                    <th>因子分</th>
+                    <th>20日动量</th>
+                    <th>资金强度</th>
+                  </tr>
+                </thead>
+                <tbody id="factorBody">
+                  <tr><td colspan="7" class="muted">点击“运行增量因子”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="section-title">增量因子历史任务</div>
+            <div class="actions">
+              <div>
+                <label>状态过滤</label>
+                <select id="factorHistoryStatus">
+                  <option value="">全部</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="done">done</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <button id="refreshFactorHistoryBtn" class="secondary" type="button">刷新历史任务</button>
+              <span id="factorHistoryStatusText" class="muted">等待加载</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务ID</th>
+                    <th>状态</th>
+                    <th>区间</th>
+                    <th>耗时(ms)</th>
+                    <th>条数</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody id="factorHistoryBody">
+                  <tr><td colspan="6" class="muted">点击“刷新历史任务”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="section-title">回测防过拟合检查</div>
+            <div class="grid">
+              <div>
+                <label>start-date (可选)</label>
+                <input id="guardStartDate" type="date" />
+              </div>
+              <div>
+                <label>end-date (可选)</label>
+                <input id="guardEndDate" type="date" />
+              </div>
+              <div>
+                <label>parameter-trials</label>
+                <input id="guardTrials" type="number" step="1" value="10" />
+              </div>
+              <div>
+                <label>commission bps</label>
+                <input id="guardCommBps" type="number" step="0.1" value="2" />
+              </div>
+              <div>
+                <label>slippage bps</label>
+                <input id="guardSlipBps" type="number" step="0.1" value="4" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="guardRunBtn">运行防过拟合检查</button>
+              <button id="guardClearBtn" class="secondary" type="button">清空列表</button>
+              <span id="guardStatus" class="muted">等待执行</span>
+            </div>
+            <div id="guardError" class="error"></div>
+            <div id="guardMeta" class="uptrend-meta"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>检查项</th>
+                    <th>状态</th>
+                    <th>实测值</th>
+                    <th>阈值</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="guardBody">
+                  <tr><td colspan="5" class="muted">点击“运行防过拟合检查”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="section-title">防过拟合历史任务</div>
+            <div class="actions">
+              <div>
+                <label>状态过滤</label>
+                <select id="guardHistoryStatus">
+                  <option value="">全部</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="done">done</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <button id="refreshGuardHistoryBtn" class="secondary" type="button">刷新历史任务</button>
+              <span id="guardHistoryStatusText" class="muted">等待加载</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务ID</th>
+                    <th>状态</th>
+                    <th>区间</th>
+                    <th>耗时(ms)</th>
+                    <th>条数</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody id="guardHistoryBody">
+                  <tr><td colspan="6" class="muted">点击“刷新历史任务”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div class="split-line"></div>
           <div id="error" class="error"></div>
           <div id="summary" class="summary"></div>
@@ -1348,6 +1507,7 @@
     const panelFundSingle = document.getElementById("panelFundSingle");
     const panelFundUptrend = document.getElementById("panelFundUptrend");
     const panelBreadth = document.getElementById("panelBreadth");
+    const panelFactorLab = document.getElementById("panelFactorLab");
     const runBtn = document.getElementById("runBtn");
     const singleStatusEl = document.getElementById("singleStatus");
     const fundRunBtn = document.getElementById("fundRunBtn");
@@ -1387,6 +1547,26 @@
     const refreshBreadthHistoryBtn = document.getElementById("refreshBreadthHistoryBtn");
     const breadthHistoryStatusText = document.getElementById("breadthHistoryStatusText");
     const breadthHistoryBody = document.getElementById("breadthHistoryBody");
+    const factorRunBtn = document.getElementById("factorRunBtn");
+    const factorClearBtn = document.getElementById("factorClearBtn");
+    const factorStatusEl = document.getElementById("factorStatus");
+    const factorErrorEl = document.getElementById("factorError");
+    const factorMetaEl = document.getElementById("factorMeta");
+    const factorBody = document.getElementById("factorBody");
+    const factorHistoryStatusSelect = document.getElementById("factorHistoryStatus");
+    const refreshFactorHistoryBtn = document.getElementById("refreshFactorHistoryBtn");
+    const factorHistoryStatusText = document.getElementById("factorHistoryStatusText");
+    const factorHistoryBody = document.getElementById("factorHistoryBody");
+    const guardRunBtn = document.getElementById("guardRunBtn");
+    const guardClearBtn = document.getElementById("guardClearBtn");
+    const guardStatusEl = document.getElementById("guardStatus");
+    const guardErrorEl = document.getElementById("guardError");
+    const guardMetaEl = document.getElementById("guardMeta");
+    const guardBody = document.getElementById("guardBody");
+    const guardHistoryStatusSelect = document.getElementById("guardHistoryStatus");
+    const refreshGuardHistoryBtn = document.getElementById("refreshGuardHistoryBtn");
+    const guardHistoryStatusText = document.getElementById("guardHistoryStatusText");
+    const guardHistoryBody = document.getElementById("guardHistoryBody");
     const previewModeEl = document.getElementById("previewMode");
     const openBtn = document.getElementById("openBtn");
     const fsBtn = document.getElementById("fsBtn");
@@ -1450,6 +1630,10 @@
     let fundHistoryItems = [];
     let breadthItems = [];
     let breadthHistoryItems = [];
+    let factorItems = [];
+    let factorHistoryItems = [];
+    let guardrailItems = [];
+    let guardHistoryItems = [];
     let currentHtmlUrl = "";
     let currentReportData = null;
     let reportRenderMode = "none";
@@ -1535,6 +1719,26 @@
       breadthHistoryStatusText.textContent = text;
     }
 
+    function setFactorStatus(text, cls) {
+      factorStatusEl.className = cls || "muted";
+      factorStatusEl.textContent = text;
+    }
+
+    function setFactorHistoryStatus(text, cls) {
+      factorHistoryStatusText.className = cls || "muted";
+      factorHistoryStatusText.textContent = text;
+    }
+
+    function setGuardStatus(text, cls) {
+      guardStatusEl.className = cls || "muted";
+      guardStatusEl.textContent = text;
+    }
+
+    function setGuardHistoryStatus(text, cls) {
+      guardHistoryStatusText.className = cls || "muted";
+      guardHistoryStatusText.textContent = text;
+    }
+
     function getVal(id) { return document.getElementById(id).value; }
     function toNum(id) { return Number(getVal(id)); }
 
@@ -1547,6 +1751,7 @@
       panelFundSingle.classList.toggle("active", tab === "fundSingle");
       panelFundUptrend.classList.toggle("active", tab === "fundUptrend");
       panelBreadth.classList.toggle("active", tab === "breadth");
+      panelFactorLab.classList.toggle("active", tab === "factorLab");
     }
 
     function adjustIframeHeight() {
@@ -3985,6 +4190,32 @@
       ).join("");
     }
 
+    function renderFactorLabSummary(summary, mode) {
+      if (!summary) { summaryEl.innerHTML = ""; return; }
+      let items = [];
+      if (mode === "guardrail") {
+        items = [
+          ["区间", `${summary.start_date || "-"} ~ ${summary.end_date || "-"}`],
+          ["检查项", Number(summary.checks || 0)],
+          ["通过/警告/失败", `${Number(summary.pass_count || 0)} / ${Number(summary.warn_count || 0)} / ${Number(summary.fail_count || 0)}`],
+          ["交易日数", Number(summary.trading_days || 0)],
+          ["样本行数", Number(summary.row_count || 0)],
+        ];
+      } else {
+        items = [
+          ["区间", `${summary.start_date || "-"} ~ ${summary.end_date || "-"}`],
+          ["交易日数", Number(summary.trading_days || 0)],
+          ["因子行数", Number(summary.factor_rows || 0)],
+          ["最新交易日", summary.latest_trade_date || "-"],
+          ["最新股票池", Number(summary.latest_universe_count || 0)],
+          ["最新入选数", Number(summary.latest_picked_count || 0)],
+        ];
+      }
+      summaryEl.innerHTML = items.map(([k,v]) =>
+        `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`
+      ).join("");
+    }
+
     async function runReportByName() {
       errEl.textContent = "";
       setSingleStatus("生成中...", "muted");
@@ -4210,6 +4441,25 @@
       return {
         start_date: getVal("breadthStartDate").trim(),
         end_date: getVal("breadthEndDate").trim(),
+      };
+    }
+
+    function getFactorParams() {
+      return {
+        start_date: getVal("factorStartDate").trim(),
+        end_date: getVal("factorEndDate").trim(),
+        top_k: Number(getVal("factorTopK")),
+        min_list_days: Number(getVal("factorMinListDays")),
+      };
+    }
+
+    function getGuardrailParams() {
+      return {
+        start_date: getVal("guardStartDate").trim(),
+        end_date: getVal("guardEndDate").trim(),
+        parameter_trials: Number(getVal("guardTrials")),
+        commission_bps: Number(getVal("guardCommBps")),
+        slippage_bps: Number(getVal("guardSlipBps")),
       };
     }
 
@@ -4555,6 +4805,264 @@
       }
     }
 
+    function renderFactorRows(items) {
+      if (!items.length) {
+        factorBody.innerHTML = '<tr><td colspan="7" class="muted">该区间没有可用数据</td></tr>';
+        return;
+      }
+      factorBody.innerHTML = items.map((item) => {
+        const score = Number(item.factor_score || 0);
+        return `
+          <tr data-factor-trade-date="${escHtml(item.trade_date)}">
+            <td>${escHtml(item.trade_date)}</td>
+            <td>${Number(item.rank_no || 0)}</td>
+            <td>${escHtml(item.name || "-")}</td>
+            <td>${escHtml(item.ts_code || "-")}</td>
+            <td class="${score >= 0 ? "rise" : "fall"}">${score.toFixed(4)}</td>
+            <td class="${Number(item.ret_20d || 0) >= 0 ? "rise" : "fall"}">${Number(item.ret_20d || 0).toFixed(2)}%</td>
+            <td>${Number(item.mf_intensity || 0).toFixed(4)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderFactorMeta(data) {
+      const m = data.metrics || {};
+      const sampled = Number(data.sampled_count || 0);
+      const total = Number(data.count || 0);
+      factorMetaEl.textContent =
+        `区间 ${data.start_date} ~ ${data.end_date}，返回 ${sampled}/${total} 条，query ${Number(m.query_ms || 0)}ms，总计 ${Number(m.total_ms || 0)}ms`;
+    }
+
+    function renderGuardrailRows(items) {
+      if (!items.length) {
+        guardBody.innerHTML = '<tr><td colspan="5" class="muted">暂无检查结果</td></tr>';
+        return;
+      }
+      guardBody.innerHTML = items.map((item) => {
+        const st = String(item.status || "");
+        const cls = st === "pass" ? "rise" : (st === "fail" ? "fall" : "");
+        return `
+          <tr>
+            <td>${escHtml(item.title || "-")}</td>
+            <td class="${cls}">${escHtml(st)}</td>
+            <td>${escHtml(String(item.value ?? "-"))}</td>
+            <td>${escHtml(String(item.threshold || "-"))}</td>
+            <td>${escHtml(String(item.detail || "-"))}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderGuardrailMeta(data) {
+      const m = data.metrics || {};
+      const s = data.summary || {};
+      guardMetaEl.textContent =
+        `区间 ${data.start_date} ~ ${data.end_date}，通过 ${Number(s.pass_count || 0)}，警告 ${Number(s.warn_count || 0)}，失败 ${Number(s.fail_count || 0)}，query ${Number(m.query_ms || 0)}ms，总计 ${Number(m.total_ms || 0)}ms`;
+    }
+
+    function renderFactorHistoryRows(items) {
+      if (!items.length) {
+        factorHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
+        return;
+      }
+      factorHistoryBody.innerHTML = items.map((item) => {
+        const cls = `tag ${escHtml(item.status || "")}`;
+        const params = `top_k=${Number(item.top_k || 0)}, min_list_days=${Number(item.min_list_days || 0)}`;
+        return `
+          <tr class="history-row" data-factor-task-id="${escHtml(item.task_id)}">
+            <td>${escHtml(item.task_id)}</td>
+            <td><span class="${cls}">${escHtml(item.status || "-")}</span></td>
+            <td>${escHtml(`${item.start_date || "-"} ~ ${item.end_date || "-"}`)}</td>
+            <td>${Number(item.total_ms || 0) || "-"}</td>
+            <td>${Number(item.row_count || 0)}</td>
+            <td>${escHtml(params)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderGuardHistoryRows(items) {
+      if (!items.length) {
+        guardHistoryBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
+        return;
+      }
+      guardHistoryBody.innerHTML = items.map((item) => {
+        const cls = `tag ${escHtml(item.status || "")}`;
+        const params = `trials=${Number(item.parameter_trials || 0)}, comm=${Number(item.commission_bps || 0)}, slip=${Number(item.slippage_bps || 0)}`;
+        return `
+          <tr class="history-row" data-guard-task-id="${escHtml(item.task_id)}">
+            <td>${escHtml(item.task_id)}</td>
+            <td><span class="${cls}">${escHtml(item.status || "-")}</span></td>
+            <td>${escHtml(`${item.start_date || "-"} ~ ${item.end_date || "-"}`)}</td>
+            <td>${Number(item.total_ms || 0) || "-"}</td>
+            <td>${Number(item.row_count || 0)}</td>
+            <td>${escHtml(params)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function pollFactorLabTask(pollUrl, setStatus, taskLabel) {
+      const deadline = Date.now() + 8 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await sleep(1500);
+        const resp = await fetch(pollUrl);
+        const data = await resp.json();
+        if (resp.status === 500) throw new Error(data.error || "async task failed");
+        if (!resp.ok) throw new Error(data.detail || "task poll failed");
+        if (data.status === "done") return data;
+        if (data.status === "error") throw new Error(data.error || "async task failed");
+        setStatus(`后台执行中... ${taskLabel} ${data.task_id}`, "muted");
+      }
+      throw new Error("任务超时，请稍后在历史任务查看");
+    }
+
+    async function fetchFactorIncremental() {
+      factorErrorEl.textContent = "";
+      setFactorStatus("执行中...", "muted");
+      try {
+        const p = getFactorParams();
+        const query = new URLSearchParams({
+          async_mode: "true",
+          top_k: String(p.top_k),
+          min_list_days: String(p.min_list_days),
+        });
+        if (p.start_date) query.set("start_date", p.start_date);
+        if (p.end_date) query.set("end_date", p.end_date);
+        const resp = await fetch(`/api/factor-incremental?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        let resultData = data;
+        if (resp.status === 202 && data.task_id) {
+          setFactorStatus("任务已提交，后台处理中...", "muted");
+          resultData = await pollFactorLabTask(data.poll_url || `/api/factor-incremental/tasks/${data.task_id}`, setFactorStatus, "任务");
+        }
+        factorItems = resultData.items || [];
+        renderFactorRows(factorItems);
+        renderFactorMeta(resultData);
+        renderFactorLabSummary(resultData.summary || null, "factor");
+        setFactorStatus("执行完成", "ok");
+        loadFactorTaskHistory();
+      } catch (e) {
+        factorItems = [];
+        renderFactorRows(factorItems);
+        setFactorStatus("执行失败", "error");
+        factorErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function fetchBacktestGuardrails() {
+      guardErrorEl.textContent = "";
+      setGuardStatus("执行中...", "muted");
+      try {
+        const p = getGuardrailParams();
+        const query = new URLSearchParams({
+          async_mode: "true",
+          parameter_trials: String(p.parameter_trials),
+          commission_bps: String(p.commission_bps),
+          slippage_bps: String(p.slippage_bps),
+        });
+        if (p.start_date) query.set("start_date", p.start_date);
+        if (p.end_date) query.set("end_date", p.end_date);
+        const resp = await fetch(`/api/backtest-guardrails?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "request failed");
+        let resultData = data;
+        if (resp.status === 202 && data.task_id) {
+          setGuardStatus("任务已提交，后台处理中...", "muted");
+          resultData = await pollFactorLabTask(data.poll_url || `/api/backtest-guardrails/tasks/${data.task_id}`, setGuardStatus, "任务");
+        }
+        guardrailItems = resultData.items || [];
+        renderGuardrailRows(guardrailItems);
+        renderGuardrailMeta(resultData);
+        renderFactorLabSummary(resultData.summary || null, "guardrail");
+        setGuardStatus("执行完成", "ok");
+        loadGuardrailTaskHistory();
+      } catch (e) {
+        guardrailItems = [];
+        renderGuardrailRows(guardrailItems);
+        setGuardStatus("执行失败", "error");
+        guardErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadFactorTaskHistory() {
+      setFactorHistoryStatus("加载中...", "muted");
+      try {
+        const query = new URLSearchParams({ page: "1", page_size: "20" });
+        const s = factorHistoryStatusSelect.value.trim();
+        if (s) query.set("status", s);
+        const resp = await fetch(`/api/factor-incremental/task-history?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "history request failed");
+        factorHistoryItems = data.items || [];
+        renderFactorHistoryRows(factorHistoryItems);
+        setFactorHistoryStatus(`已加载 ${factorHistoryItems.length} / 总计 ${data.total || 0}`, "ok");
+      } catch (e) {
+        factorHistoryItems = [];
+        renderFactorHistoryRows(factorHistoryItems);
+        setFactorHistoryStatus("加载失败", "error");
+        factorErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadGuardrailTaskHistory() {
+      setGuardHistoryStatus("加载中...", "muted");
+      try {
+        const query = new URLSearchParams({ page: "1", page_size: "20" });
+        const s = guardHistoryStatusSelect.value.trim();
+        if (s) query.set("status", s);
+        const resp = await fetch(`/api/backtest-guardrails/task-history?${query.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "history request failed");
+        guardHistoryItems = data.items || [];
+        renderGuardHistoryRows(guardHistoryItems);
+        setGuardHistoryStatus(`已加载 ${guardHistoryItems.length} / 总计 ${data.total || 0}`, "ok");
+      } catch (e) {
+        guardHistoryItems = [];
+        renderGuardHistoryRows(guardHistoryItems);
+        setGuardHistoryStatus("加载失败", "error");
+        guardErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadFactorTask(taskId) {
+      setFactorStatus(`加载任务 ${taskId} 中...`, "muted");
+      try {
+        const resp = await fetch(`/api/factor-incremental/tasks/${encodeURIComponent(taskId)}`);
+        const data = await resp.json();
+        if (resp.status === 500) throw new Error(data.error || "task failed");
+        if (!resp.ok) throw new Error(data.detail || "load task failed");
+        factorItems = data.items || [];
+        renderFactorRows(factorItems);
+        renderFactorMeta(data);
+        renderFactorLabSummary(data.summary || null, "factor");
+        setFactorStatus("历史任务已加载", "ok");
+      } catch (e) {
+        setFactorStatus("加载历史任务失败", "error");
+        factorErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function loadGuardTask(taskId) {
+      setGuardStatus(`加载任务 ${taskId} 中...`, "muted");
+      try {
+        const resp = await fetch(`/api/backtest-guardrails/tasks/${encodeURIComponent(taskId)}`);
+        const data = await resp.json();
+        if (resp.status === 500) throw new Error(data.error || "task failed");
+        if (!resp.ok) throw new Error(data.detail || "load task failed");
+        guardrailItems = data.items || [];
+        renderGuardrailRows(guardrailItems);
+        renderGuardrailMeta(data);
+        renderFactorLabSummary(data.summary || null, "guardrail");
+        setGuardStatus("历史任务已加载", "ok");
+      } catch (e) {
+        setGuardStatus("加载历史任务失败", "error");
+        guardErrorEl.textContent = String(e.message || e);
+      }
+    }
+
     function renderHistoryRows(items) {
       if (!items.length) {
         historyBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
@@ -4715,6 +5223,30 @@
       setBreadthStatus("已清空", "muted");
     });
 
+    factorRunBtn.addEventListener("click", fetchFactorIncremental);
+    refreshFactorHistoryBtn.addEventListener("click", loadFactorTaskHistory);
+    factorHistoryStatusSelect.addEventListener("change", loadFactorTaskHistory);
+    factorClearBtn.addEventListener("click", () => {
+      factorItems = [];
+      factorMetaEl.textContent = "";
+      factorErrorEl.textContent = "";
+      renderFactorRows(factorItems);
+      renderFactorLabSummary(null, "factor");
+      setFactorStatus("已清空", "muted");
+    });
+
+    guardRunBtn.addEventListener("click", fetchBacktestGuardrails);
+    refreshGuardHistoryBtn.addEventListener("click", loadGuardrailTaskHistory);
+    guardHistoryStatusSelect.addEventListener("change", loadGuardrailTaskHistory);
+    guardClearBtn.addEventListener("click", () => {
+      guardrailItems = [];
+      guardMetaEl.textContent = "";
+      guardErrorEl.textContent = "";
+      renderGuardrailRows(guardrailItems);
+      renderFactorLabSummary(null, "guardrail");
+      setGuardStatus("已清空", "muted");
+    });
+
     historyBody.addEventListener("click", async (event) => {
       const row = event.target.closest("tr[data-task-id]");
       if (!row) return;
@@ -4784,6 +5316,45 @@
       Array.from(breadthHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
       row.classList.add("selected");
       await loadBreadthTask(taskId);
+    });
+
+    factorHistoryBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-factor-task-id]");
+      if (!row) return;
+      const taskId = row.dataset.factorTaskId;
+      if (!taskId) return;
+      Array.from(factorHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await loadFactorTask(taskId);
+    });
+
+    guardHistoryBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-guard-task-id]");
+      if (!row) return;
+      const taskId = row.dataset.guardTaskId;
+      if (!taskId) return;
+      Array.from(guardHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await loadGuardTask(taskId);
+    });
+
+    factorBody.addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-factor-trade-date]");
+      if (!row) return;
+      const codeCell = row.children && row.children[3];
+      const dateCell = row.children && row.children[0];
+      const code = codeCell ? String(codeCell.textContent || "").trim() : "";
+      const tradeDate = dateCell ? String(dateCell.textContent || "").trim() : "";
+      if (!code) return;
+      Array.from(factorBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
+      row.classList.add("selected");
+      await runReportByCode(code, {
+        threshold: toNum("threshold"),
+        min_gap: toNum("minGap"),
+        lookback_days: toNum("lookback"),
+        end_date: tradeDate,
+        asset_type: "E",
+      });
     });
 
     openBtn.addEventListener("click", () => {
@@ -4919,6 +5490,8 @@
     loadTaskHistory();
     loadFundTaskHistory();
     loadBreadthTaskHistory();
+    loadFactorTaskHistory();
+    loadGuardrailTaskHistory();
   </script>
 </body>
 </html>

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, timedelta
+import os
 from pathlib import Path
 import sys
 import time
+import shlex
 
 import pandas as pd
 import tushare as ts
@@ -15,6 +17,28 @@ import tushare as ts
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or key in os.environ:
+            continue
+        try:
+            parsed = shlex.split(value)
+            os.environ[key] = parsed[0] if parsed else ""
+        except Exception:
+            os.environ[key] = value.strip("'\"")
+
+
+load_env_file(Path.home() / ".config" / "ashare_monitor" / "cycle_web.env")
 
 from ashare_monitor.stock_sync.config import TUSHARE_TOKEN
 from ashare_monitor.stock_sync.db import execute_sql_file, upsert_stock_moneyflow
@@ -24,6 +48,7 @@ RATE_LIMIT_SLEEP_SECONDS = 65
 GENERAL_RETRY_SLEEP_SECONDS = 5
 MAX_API_RETRIES = 5
 REQUEST_INTERVAL_SECONDS = 0.2
+DEFAULT_TRADE_DAYS_ONE_YEAR = 252
 MONEYFLOW_FIELD_NAMES = (
     "buy_sm_vol",
     "buy_sm_amount",
@@ -48,9 +73,14 @@ MONEYFLOW_FIELD_NAMES = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch recent N trade days moneyflow for all A-shares by trade_date."
+        description="Fetch recent N trade days moneyflow for all A-shares by trade_date (default: ~1 year)."
     )
-    parser.add_argument("--days", type=int, default=30, help="Recent N trade days.")
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=DEFAULT_TRADE_DAYS_ONE_YEAR,
+        help=f"Recent N trade days (default {DEFAULT_TRADE_DAYS_ONE_YEAR}, about 1 trading year).",
+    )
     parser.add_argument(
         "--end-date",
         default="",

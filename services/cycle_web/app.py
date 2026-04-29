@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from decimal import Decimal
 import json
+import math
 import os
 from html import escape as html_escape
 import pymysql
@@ -50,8 +51,12 @@ DEFAULT_MYSQL_PORT = int(os.getenv("CYCLE_WEB_MYSQL_PORT", os.getenv("MYSQL_PORT
 UPTREND_TASK_WORKERS = max(1, int(os.getenv("UPTREND_TASK_WORKERS", "2")))
 BREADTH_TASK_WORKERS = max(1, int(os.getenv("BREADTH_TASK_WORKERS", "2")))
 REPORT_TASK_WORKERS = max(1, int(os.getenv("REPORT_TASK_WORKERS", "2")))
+RESEARCH_TASK_WORKERS = max(1, int(os.getenv("RESEARCH_TASK_WORKERS", "2")))
 BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS = max(
     30, int(os.getenv("BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS", "180"))
+)
+BREADTH_FACTOR_LOOKBACK_TRADE_DAYS = max(
+    10, int(os.getenv("BREADTH_FACTOR_LOOKBACK_TRADE_DAYS", "40"))
 )
 BREADTH_MAX_SAMPLE_POINTS = max(50, int(os.getenv("BREADTH_MAX_SAMPLE_POINTS", "300")))
 BREADTH_CACHE_TTL_SEC = max(30, int(os.getenv("BREADTH_CACHE_TTL_SEC", "600")))
@@ -66,6 +71,9 @@ BREADTH_TABLE_READY: set[tuple[str, int, str, str]] = set()
 REPORT_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=REPORT_TASK_WORKERS)
 REPORT_TABLE_LOCK = Lock()
 REPORT_TABLE_READY: set[tuple[str, int, str, str]] = set()
+RESEARCH_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=RESEARCH_TASK_WORKERS)
+RESEARCH_TABLE_LOCK = Lock()
+RESEARCH_TABLE_READY: set[tuple[str, int, str, str]] = set()
 CYCLE_EVENT_TABLE_LOCK = Lock()
 CYCLE_EVENT_TABLE_READY: set[tuple[str, int, str, str]] = set()
 BREADTH_CACHE_LOCK = Lock()
@@ -1183,6 +1191,748 @@ def _list_breadth_tasks(
             cursor.execute(list_sql, tuple(args + [safe_size, offset]))
             rows = cursor.fetchall() or []
     return total, [_jsonify_row(r) for r in rows]
+
+
+def _ensure_research_task_tables(mysql_cfg: dict) -> None:
+    key = (
+        str(mysql_cfg["host"]),
+        int(mysql_cfg.get("port", DEFAULT_MYSQL_PORT)),
+        str(mysql_cfg["user"]),
+        str(mysql_cfg["database"]),
+    )
+    with RESEARCH_TABLE_LOCK:
+        if key in RESEARCH_TABLE_READY:
+            return
+
+    task_sql = """
+    CREATE TABLE IF NOT EXISTS factor_research_task (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      task_id VARCHAR(32) NOT NULL,
+      task_type VARCHAR(32) NOT NULL,
+      status VARCHAR(16) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      top_k INT NULL,
+      min_list_days INT NULL,
+      parameter_trials INT NULL,
+      commission_bps DECIMAL(10,4) NULL,
+      slippage_bps DECIMAL(10,4) NULL,
+      row_count INT NULL,
+      result_file VARCHAR(255) NULL,
+      query_ms INT NULL,
+      total_ms INT NULL,
+      error_message TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      started_at DATETIME(3) NULL,
+      finished_at DATETIME(3) NULL,
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_task_id (task_id),
+      KEY idx_type_created (task_type, created_at),
+      KEY idx_status_created (status, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(task_sql)
+            for alter_sql in (
+                "ALTER TABLE factor_research_task ADD COLUMN query_ms INT NULL",
+                "ALTER TABLE factor_research_task ADD COLUMN total_ms INT NULL",
+                "ALTER TABLE factor_research_task MODIFY COLUMN task_type VARCHAR(32) NOT NULL",
+            ):
+                try:
+                    cursor.execute(alter_sql)
+                except Exception:
+                    pass
+        conn.commit()
+
+    with RESEARCH_TABLE_LOCK:
+        RESEARCH_TABLE_READY.add(key)
+
+
+def _save_research_task_result(task_id: str, payload: dict) -> str:
+    name = f"factor_research_task_{task_id}.json"
+    path = SERVICE_REPORT_DIR / name
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return name
+
+
+def _load_research_task_result(result_file: str) -> Optional[dict]:
+    if not result_file:
+        return None
+    path = SERVICE_REPORT_DIR / result_file
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _insert_research_task(
+    *,
+    task_id: str,
+    task_type: str,
+    start_date: str,
+    end_date: str,
+    top_k: Optional[int],
+    min_list_days: Optional[int],
+    parameter_trials: Optional[int],
+    commission_bps: Optional[float],
+    slippage_bps: Optional[float],
+    request_ip: str,
+    user_agent: str,
+    mysql_cfg: dict,
+) -> None:
+    _ensure_research_task_tables(mysql_cfg)
+    sql = """
+    INSERT INTO factor_research_task (
+      task_id, task_type, status, start_date, end_date, top_k, min_list_days,
+      parameter_trials, commission_bps, slippage_bps
+    ) VALUES (
+      %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s
+    )
+    """
+    _ = request_ip, user_agent
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                sql,
+                (
+                    task_id,
+                    task_type,
+                    start_date,
+                    end_date,
+                    top_k,
+                    min_list_days,
+                    parameter_trials,
+                    commission_bps,
+                    slippage_bps,
+                ),
+            )
+        conn.commit()
+
+
+def _mark_research_task_running(task_id: str, mysql_cfg: dict) -> None:
+    _ensure_research_task_tables(mysql_cfg)
+    sql = """
+    UPDATE factor_research_task
+    SET status='running', started_at=NOW(3), updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+        conn.commit()
+
+
+def _mark_research_task_done(task_id: str, payload: dict, metrics: dict, mysql_cfg: dict) -> None:
+    _ensure_research_task_tables(mysql_cfg)
+    result_file = _save_research_task_result(task_id, payload)
+    sql = """
+    UPDATE factor_research_task
+    SET status='done',
+        row_count=%s,
+        result_file=%s,
+        query_ms=%s,
+        total_ms=%s,
+        error_message=NULL,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                sql,
+                (
+                    int(payload.get("count") or 0),
+                    result_file,
+                    int(metrics.get("query_ms") or 0),
+                    int(metrics.get("total_ms") or 0),
+                    task_id,
+                ),
+            )
+        conn.commit()
+
+
+def _mark_research_task_error(task_id: str, error_message: str, total_ms: int, mysql_cfg: dict) -> None:
+    _ensure_research_task_tables(mysql_cfg)
+    sql = """
+    UPDATE factor_research_task
+    SET status='error',
+        error_message=%s,
+        total_ms=%s,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, ((error_message or "")[:4096], max(0, int(total_ms)), task_id))
+        conn.commit()
+
+
+def _fetch_research_task(task_id: str, mysql_cfg: dict) -> Optional[dict]:
+    _ensure_research_task_tables(mysql_cfg)
+    sql = """
+    SELECT
+      task_id, task_type, status, start_date, end_date, top_k, min_list_days,
+      parameter_trials, commission_bps, slippage_bps, row_count, result_file,
+      query_ms, total_ms, error_message, created_at, started_at, finished_at
+    FROM factor_research_task
+    WHERE task_id = %s
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+            row = cursor.fetchone()
+    return _jsonify_row(row) if row else None
+
+
+def _list_research_tasks(
+    *,
+    task_type: str,
+    page: int,
+    page_size: int,
+    status: str,
+    mysql_cfg: dict,
+) -> tuple[int, list[dict]]:
+    _ensure_research_task_tables(mysql_cfg)
+    safe_page = max(1, page)
+    safe_size = max(1, min(page_size, 100))
+    offset = (safe_page - 1) * safe_size
+    args: list[Any] = [task_type]
+    where = "WHERE task_type=%s"
+    if status:
+        where += " AND status=%s"
+        args.append(status)
+    count_sql = f"SELECT COUNT(*) AS total FROM factor_research_task {where}"
+    list_sql = f"""
+    SELECT
+      task_id, task_type, status, start_date, end_date, top_k, min_list_days,
+      parameter_trials, commission_bps, slippage_bps, row_count, query_ms, total_ms,
+      error_message, created_at, started_at, finished_at
+    FROM factor_research_task
+    {where}
+    ORDER BY created_at DESC
+    LIMIT %s OFFSET %s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(count_sql, tuple(args))
+            total = int((cursor.fetchone() or {}).get("total") or 0)
+            cursor.execute(list_sql, tuple(args + [safe_size, offset]))
+            rows = cursor.fetchall() or []
+    return total, [_jsonify_row(r) for r in rows]
+
+
+def _resolve_factor_research_range(
+    *,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    mysql_cfg: dict,
+) -> tuple[str, str]:
+    if not start_date and not end_date:
+        return _resolve_default_range_by_trade_days(
+            mysql_cfg=mysql_cfg,
+            lookback_trade_days=BREADTH_FACTOR_LOOKBACK_TRADE_DAYS,
+        )
+    sql = "SELECT MAX(trade_date) AS max_date FROM stock_daily WHERE asset_type='E'"
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+            row = cursor.fetchone() or {}
+    max_date = row.get("max_date")
+    if not max_date:
+        raise HTTPException(status_code=404, detail="stock_daily has no data")
+
+    end_dt = _parse_date_ymd(end_date, "end_date") if end_date else max_date
+    if start_date:
+        start_dt = _parse_date_ymd(start_date, "start_date")
+    else:
+        sql = """
+        SELECT trade_date
+        FROM (
+          SELECT DISTINCT trade_date
+          FROM stock_daily
+          WHERE trade_date <= %s
+            AND asset_type = 'E'
+          ORDER BY trade_date DESC
+          LIMIT %s
+        ) x
+        ORDER BY trade_date ASC
+        LIMIT 1
+        """
+        with _mysql_connect(mysql_cfg) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (end_dt.isoformat(), BREADTH_FACTOR_LOOKBACK_TRADE_DAYS))
+                picked = cursor.fetchone()
+        start_dt = (picked or {}).get("trade_date") or end_dt
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+    return start_dt.isoformat(), end_dt.isoformat()
+
+
+def _execute_factor_incremental_query(
+    *,
+    start_date: str,
+    end_date: str,
+    top_k: int,
+    min_list_days: int,
+    mysql_cfg: dict,
+) -> tuple[dict, dict]:
+    started = time.time()
+    hist_start = (date.fromisoformat(start_date) - timedelta(days=90)).isoformat()
+    q_started = time.time()
+    sql = """
+    SELECT
+      d.trade_date,
+      d.ts_code,
+      b.name,
+      b.industry,
+      b.list_date,
+      d.close,
+      d.amount,
+      d.net_mf_amount,
+      d.pct_chg
+    FROM stock_daily d
+    JOIN stock_basic b ON b.ts_code = d.ts_code
+    WHERE d.asset_type = 'E'
+      AND b.asset_type = 'E'
+      AND b.list_status = 'L'
+      AND d.trade_date BETWEEN %s AND %s
+    ORDER BY d.ts_code ASC, d.trade_date ASC
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (hist_start, end_date))
+            rows = cursor.fetchall() or []
+    query_ms = int((time.time() - q_started) * 1000)
+
+    by_code: dict[str, list[dict]] = {}
+    for row in rows:
+        code = str(row.get("ts_code") or "")
+        if not code:
+            continue
+        by_code.setdefault(code, []).append(row)
+
+    factors_by_date: dict[str, list[dict]] = {}
+    total_factor_rows = 0
+    for code, items in by_code.items():
+        closes: list[float] = []
+        pcts: list[float] = []
+        amts: list[float] = []
+        for row in items:
+            trade_date = str(row.get("trade_date") or "")
+            if not trade_date or trade_date < start_date or trade_date > end_date:
+                pass
+            close_v = row.get("close")
+            if close_v is None:
+                continue
+            close_f = float(close_v)
+            amount_f = float(row.get("amount") or 0.0)
+            pct_f = float(row.get("pct_chg") or 0.0)
+            closes.append(close_f)
+            pcts.append(pct_f)
+            amts.append(amount_f)
+            i = len(closes) - 1
+            if i < 20:
+                continue
+            if not trade_date or trade_date < start_date or trade_date > end_date:
+                continue
+            list_date = row.get("list_date")
+            if list_date:
+                if isinstance(list_date, str):
+                    list_date = date.fromisoformat(list_date)
+                list_days = (date.fromisoformat(trade_date) - list_date).days
+                if list_days < min_list_days:
+                    continue
+            prev5 = closes[i - 5]
+            prev20 = closes[i - 20]
+            if prev5 <= 0 or prev20 <= 0:
+                continue
+            last20_pct = pcts[i - 19 : i + 1]
+            last20_amt = amts[i - 19 : i + 1]
+            if not last20_pct or not last20_amt:
+                continue
+            avg_pct = sum(last20_pct) / len(last20_pct)
+            avg_amt = sum(last20_amt) / len(last20_amt)
+            var_pct = sum((x - avg_pct) ** 2 for x in last20_pct) / len(last20_pct)
+            vol20 = var_pct ** 0.5
+            mf_amt = float(row.get("net_mf_amount") or 0.0)
+            mf_intensity = (mf_amt / amount_f) if amount_f > 0 else 0.0
+            liq_log = math.log(max(avg_amt, 1.0))
+            record = {
+                "trade_date": trade_date,
+                "ts_code": code,
+                "name": str(row.get("name") or code),
+                "industry": str(row.get("industry") or ""),
+                "ret_5d": (close_f / prev5 - 1.0) * 100.0,
+                "ret_20d": (close_f / prev20 - 1.0) * 100.0,
+                "vol_20d": vol20,
+                "mf_intensity": mf_intensity,
+                "avg_amount_20d": avg_amt,
+                "liq_log": liq_log,
+            }
+            factors_by_date.setdefault(trade_date, []).append(record)
+            total_factor_rows += 1
+
+    sampled: list[dict] = []
+    daily_stats: list[dict] = []
+    for td in sorted(factors_by_date.keys()):
+        day_rows = factors_by_date[td]
+        if not day_rows:
+            continue
+        def _z(values: list[float]) -> list[float]:
+            avg_v = sum(values) / len(values)
+            var_v = sum((x - avg_v) ** 2 for x in values) / max(1, len(values))
+            std_v = var_v ** 0.5
+            if std_v <= 1e-12:
+                return [0.0 for _ in values]
+            return [(x - avg_v) / std_v for x in values]
+
+        z_ret20 = _z([float(x["ret_20d"]) for x in day_rows])
+        z_mf = _z([float(x["mf_intensity"]) for x in day_rows])
+        z_liq = _z([float(x["avg_amount_20d"]) for x in day_rows])
+        z_vol = _z([float(x["vol_20d"]) for x in day_rows])
+        for idx, item in enumerate(day_rows):
+            score = 0.40 * z_ret20[idx] + 0.30 * z_mf[idx] + 0.20 * z_liq[idx] - 0.10 * z_vol[idx]
+            item["factor_score"] = round(score, 6)
+        day_rows.sort(key=lambda x: float(x["factor_score"]), reverse=True)
+        picked = day_rows[: max(1, top_k)]
+        for rank_no, item in enumerate(picked, start=1):
+            sampled.append(
+                {
+                    "trade_date": item["trade_date"],
+                    "rank_no": rank_no,
+                    "ts_code": item["ts_code"],
+                    "name": item["name"],
+                    "industry": item["industry"],
+                    "factor_score": round(float(item["factor_score"]), 4),
+                    "ret_5d": round(float(item["ret_5d"]), 3),
+                    "ret_20d": round(float(item["ret_20d"]), 3),
+                    "vol_20d": round(float(item["vol_20d"]), 3),
+                    "mf_intensity": round(float(item["mf_intensity"]), 5),
+                    "avg_amount_20d": round(float(item["avg_amount_20d"]), 2),
+                }
+            )
+        daily_stats.append(
+            {
+                "trade_date": td,
+                "universe_count": len(day_rows),
+                "picked_count": len(picked),
+                "top_score": round(float(picked[0]["factor_score"]), 4) if picked else None,
+                "median_score": round(float(day_rows[len(day_rows) // 2]["factor_score"]), 4),
+            }
+        )
+
+    summary = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "trading_days": len(daily_stats),
+        "factor_rows": total_factor_rows,
+        "latest_trade_date": daily_stats[-1]["trade_date"] if daily_stats else None,
+        "latest_universe_count": daily_stats[-1]["universe_count"] if daily_stats else 0,
+        "latest_picked_count": daily_stats[-1]["picked_count"] if daily_stats else 0,
+    }
+    result = {
+        "task_type": "factor_incremental",
+        "start_date": start_date,
+        "end_date": end_date,
+        "count": total_factor_rows,
+        "sampled_count": len(sampled),
+        "sample_points": max(1, top_k),
+        "items": sampled,
+        "daily_stats": daily_stats,
+        "summary": summary,
+        "params": {
+            "top_k": max(1, top_k),
+            "min_list_days": max(0, min_list_days),
+        },
+    }
+    metrics = {
+        "query_ms": query_ms,
+        "total_ms": int((time.time() - started) * 1000),
+    }
+    result["metrics"] = metrics
+    return result, metrics
+
+
+def _execute_backtest_guardrail_query(
+    *,
+    start_date: str,
+    end_date: str,
+    parameter_trials: int,
+    commission_bps: float,
+    slippage_bps: float,
+    mysql_cfg: dict,
+) -> tuple[dict, dict]:
+    started = time.time()
+    q_started = time.time()
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                  COUNT(*) AS row_count,
+                  COUNT(DISTINCT CONCAT(ts_code, '#', trade_date)) AS uniq_count,
+                  SUM(CASE WHEN pct_chg IS NULL THEN 1 ELSE 0 END) AS pct_null_count,
+                  SUM(CASE WHEN amount IS NULL OR amount <= 0 THEN 1 ELSE 0 END) AS amount_bad_count
+                FROM stock_daily
+                WHERE asset_type='E'
+                  AND trade_date BETWEEN %s AND %s
+                """,
+                (start_date, end_date),
+            )
+            row_stats = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT
+                  COUNT(*) AS trading_days,
+                  AVG(total_count) AS avg_universe
+                FROM market_breadth_daily
+                WHERE trade_date BETWEEN %s AND %s
+                """,
+                (start_date, end_date),
+            )
+            breadth_stats = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT
+                  AVG(CASE WHEN day_sum > 0 THEN day_max / day_sum ELSE 0 END) AS avg_top1_share
+                FROM (
+                  SELECT trade_date, SUM(amount) AS day_sum, MAX(amount) AS day_max
+                  FROM stock_daily
+                  WHERE asset_type='E'
+                    AND trade_date BETWEEN %s AND %s
+                  GROUP BY trade_date
+                ) t
+                """,
+                (start_date, end_date),
+            )
+            liq_stats = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS future_rows
+                FROM stock_daily
+                WHERE asset_type='E' AND trade_date > CURDATE()
+                """
+            )
+            future_stats = cursor.fetchone() or {}
+
+    query_ms = int((time.time() - q_started) * 1000)
+
+    row_count = int(row_stats.get("row_count") or 0)
+    uniq_count = int(row_stats.get("uniq_count") or 0)
+    dup_ratio = 0.0 if row_count <= 0 else max(0.0, 1.0 - (uniq_count / max(1, row_count)))
+    pct_null_ratio = 0.0 if row_count <= 0 else float(row_stats.get("pct_null_count") or 0) / row_count
+    amount_bad_ratio = 0.0 if row_count <= 0 else float(row_stats.get("amount_bad_count") or 0) / row_count
+    trading_days = int(breadth_stats.get("trading_days") or 0)
+    avg_universe = float(breadth_stats.get("avg_universe") or 0.0)
+    avg_top1_share = float(liq_stats.get("avg_top1_share") or 0.0)
+    future_rows = int(future_stats.get("future_rows") or 0)
+    total_cost_bps = float(commission_bps) + float(slippage_bps)
+
+    checks = [
+        {
+            "check_id": "no_future_rows",
+            "title": "未来日期泄漏检查",
+            "status": "pass" if future_rows == 0 else "fail",
+            "value": future_rows,
+            "threshold": "必须=0",
+            "detail": "stock_daily 中 trade_date > CURDATE() 的行数",
+        },
+        {
+            "check_id": "pk_uniqueness",
+            "title": "主键唯一性检查",
+            "status": "pass" if dup_ratio == 0 else ("warn" if dup_ratio < 0.0005 else "fail"),
+            "value": round(dup_ratio * 100, 4),
+            "threshold": "<0.05%",
+            "detail": "按(ts_code, trade_date)去重后的重复比例",
+        },
+        {
+            "check_id": "missing_pct_chg",
+            "title": "收益字段缺失率",
+            "status": "pass" if pct_null_ratio <= 0.01 else ("warn" if pct_null_ratio <= 0.03 else "fail"),
+            "value": round(pct_null_ratio * 100, 3),
+            "threshold": "<=1% 优",
+            "detail": "pct_chg 缺失会直接污染IC/分层收益",
+        },
+        {
+            "check_id": "tradable_amount",
+            "title": "可交易性检查",
+            "status": "pass" if amount_bad_ratio <= 0.01 else ("warn" if amount_bad_ratio <= 0.05 else "fail"),
+            "value": round(amount_bad_ratio * 100, 3),
+            "threshold": "<=1% 优",
+            "detail": "amount为空或<=0的比例",
+        },
+        {
+            "check_id": "sample_days",
+            "title": "样本交易日充足性",
+            "status": "pass" if trading_days >= 120 else ("warn" if trading_days >= 60 else "fail"),
+            "value": trading_days,
+            "threshold": ">=120 日优",
+            "detail": "短样本容易把噪声当信号",
+        },
+        {
+            "check_id": "avg_universe_size",
+            "title": "每日样本覆盖",
+            "status": "pass" if avg_universe >= 3000 else ("warn" if avg_universe >= 2000 else "fail"),
+            "value": int(round(avg_universe)),
+            "threshold": ">=3000 优",
+            "detail": "横截面太窄时分层统计波动会放大",
+        },
+        {
+            "check_id": "liquidity_concentration",
+            "title": "流动性集中度",
+            "status": "pass" if avg_top1_share <= 0.05 else ("warn" if avg_top1_share <= 0.08 else "fail"),
+            "value": round(avg_top1_share * 100, 3),
+            "threshold": "<=5% 优",
+            "detail": "单日最大成交额个股占全市场成交额比例均值",
+        },
+        {
+            "check_id": "param_sweep",
+            "title": "参数搜索强度",
+            "status": "pass" if parameter_trials <= 20 else ("warn" if parameter_trials <= 60 else "fail"),
+            "value": int(parameter_trials),
+            "threshold": "<=20 优",
+            "detail": "尝试参数越多，越需要更严格样本外验证",
+        },
+        {
+            "check_id": "cost_assumption",
+            "title": "交易成本假设",
+            "status": "pass" if total_cost_bps >= 8 else ("warn" if total_cost_bps >= 4 else "fail"),
+            "value": round(total_cost_bps, 2),
+            "threshold": ">=8 bps 优",
+            "detail": "默认建议至少覆盖佣金+滑点+部分冲击成本",
+        },
+    ]
+
+    pass_count = sum(1 for x in checks if x["status"] == "pass")
+    warn_count = sum(1 for x in checks if x["status"] == "warn")
+    fail_count = sum(1 for x in checks if x["status"] == "fail")
+    summary = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "checks": len(checks),
+        "pass_count": pass_count,
+        "warn_count": warn_count,
+        "fail_count": fail_count,
+        "trading_days": trading_days,
+        "row_count": row_count,
+    }
+    result = {
+        "task_type": "backtest_guardrail",
+        "start_date": start_date,
+        "end_date": end_date,
+        "count": len(checks),
+        "sampled_count": len(checks),
+        "items": checks,
+        "summary": summary,
+        "params": {
+            "parameter_trials": int(parameter_trials),
+            "commission_bps": float(commission_bps),
+            "slippage_bps": float(slippage_bps),
+        },
+    }
+    metrics = {
+        "query_ms": query_ms,
+        "total_ms": int((time.time() - started) * 1000),
+    }
+    result["metrics"] = metrics
+    return result, metrics
+
+
+def _run_research_task(
+    task_id: str,
+    *,
+    task_type: str,
+    start_date: str,
+    end_date: str,
+    top_k: int,
+    min_list_days: int,
+    parameter_trials: int,
+    commission_bps: float,
+    slippage_bps: float,
+    mysql_cfg: dict,
+) -> None:
+    started = time.time()
+    _mark_research_task_running(task_id, mysql_cfg)
+    try:
+        if task_type == "backtest_guardrail":
+            payload, metrics = _execute_backtest_guardrail_query(
+                start_date=start_date,
+                end_date=end_date,
+                parameter_trials=parameter_trials,
+                commission_bps=commission_bps,
+                slippage_bps=slippage_bps,
+                mysql_cfg=mysql_cfg,
+            )
+        else:
+            payload, metrics = _execute_factor_incremental_query(
+                start_date=start_date,
+                end_date=end_date,
+                top_k=top_k,
+                min_list_days=min_list_days,
+                mysql_cfg=mysql_cfg,
+            )
+        _mark_research_task_done(task_id, payload, metrics, mysql_cfg)
+    except Exception as exc:
+        _mark_research_task_error(
+            task_id=task_id,
+            error_message=str(exc),
+            total_ms=int((time.time() - started) * 1000),
+            mysql_cfg=mysql_cfg,
+        )
+
+
+def _submit_research_task(
+    *,
+    task_type: str,
+    start_date: str,
+    end_date: str,
+    top_k: int,
+    min_list_days: int,
+    parameter_trials: int,
+    commission_bps: float,
+    slippage_bps: float,
+    request_ip: str,
+    user_agent: str,
+    mysql_cfg: dict,
+) -> str:
+    task_id = uuid.uuid4().hex[:16]
+    _insert_research_task(
+        task_id=task_id,
+        task_type=task_type,
+        start_date=start_date,
+        end_date=end_date,
+        top_k=top_k if task_type == "factor_incremental" else None,
+        min_list_days=min_list_days if task_type == "factor_incremental" else None,
+        parameter_trials=parameter_trials if task_type == "backtest_guardrail" else None,
+        commission_bps=commission_bps if task_type == "backtest_guardrail" else None,
+        slippage_bps=slippage_bps if task_type == "backtest_guardrail" else None,
+        request_ip=request_ip,
+        user_agent=user_agent,
+        mysql_cfg=mysql_cfg,
+    )
+    RESEARCH_TASK_EXECUTOR.submit(
+        _run_research_task,
+        task_id,
+        task_type=task_type,
+        start_date=start_date,
+        end_date=end_date,
+        top_k=top_k,
+        min_list_days=min_list_days,
+        parameter_trials=parameter_trials,
+        commission_bps=commission_bps,
+        slippage_bps=slippage_bps,
+        mysql_cfg=mysql_cfg,
+    )
+    return task_id
 
 
 def _run_uptrend_scan_task(
@@ -3403,6 +4153,318 @@ def list_market_breadth_task_history(
         "page": max(1, page),
         "page_size": max(1, min(page_size, 100)),
         "items": items,
+    }
+
+
+@app.get("/api/factor-incremental")
+def factor_incremental(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    top_k: int = 50,
+    min_list_days: int = 60,
+    async_mode: bool = True,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    safe_top_k = max(1, min(int(top_k), 500))
+    safe_min_list_days = max(0, min(int(min_list_days), 2000))
+    safe_start, safe_end = _resolve_factor_research_range(
+        start_date=start_date,
+        end_date=end_date,
+        mysql_cfg=mysql_cfg,
+    )
+    if async_mode:
+        task_id = _submit_research_task(
+            task_type="factor_incremental",
+            start_date=safe_start,
+            end_date=safe_end,
+            top_k=safe_top_k,
+            min_list_days=safe_min_list_days,
+            parameter_trials=0,
+            commission_bps=0.0,
+            slippage_bps=0.0,
+            request_ip=(request.client.host if request.client else ""),
+            user_agent=request.headers.get("user-agent", ""),
+            mysql_cfg=mysql_cfg,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "task_id": task_id,
+                "status": "queued",
+                "task_type": "factor_incremental",
+                "poll_url": f"/api/factor-incremental/tasks/{task_id}",
+                "start_date": safe_start,
+                "end_date": safe_end,
+            },
+        )
+    payload, _metrics = _execute_factor_incremental_query(
+        start_date=safe_start,
+        end_date=safe_end,
+        top_k=safe_top_k,
+        min_list_days=safe_min_list_days,
+        mysql_cfg=mysql_cfg,
+    )
+    payload["async_mode"] = False
+    return payload
+
+
+@app.get("/api/factor-incremental/tasks/{task_id}")
+def get_factor_incremental_task(
+    task_id: str,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    row = _fetch_research_task(task_id, mysql_cfg)
+    if not row or str(row.get("task_type") or "") != "factor_incremental":
+        raise HTTPException(status_code=404, detail="task not found")
+    status = str(row.get("status") or "")
+    base = {
+        "task_id": row.get("task_id"),
+        "task_type": "factor_incremental",
+        "status": status,
+        "start_date": row.get("start_date"),
+        "end_date": row.get("end_date"),
+        "params": {
+            "top_k": int(row.get("top_k") or 0),
+            "min_list_days": int(row.get("min_list_days") or 0),
+        },
+        "poll_url": f"/api/factor-incremental/tasks/{task_id}",
+        "created_at": row.get("created_at"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "metrics": {
+            "query_ms": row.get("query_ms"),
+            "total_ms": row.get("total_ms"),
+        },
+    }
+    if status in {"queued", "running"}:
+        return base
+    if status == "error":
+        return JSONResponse(
+            status_code=500,
+            content={**base, "error": row.get("error_message") or "task failed"},
+        )
+    payload = _load_research_task_result(str(row.get("result_file") or ""))
+    if not payload:
+        raise HTTPException(status_code=500, detail="task result missing")
+    payload.update(base)
+    payload["async_mode"] = True
+    return payload
+
+
+@app.get("/api/factor-incremental/task-history")
+def list_factor_incremental_task_history(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "",
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    safe_status = status.strip().lower()
+    if safe_status and safe_status not in {"queued", "running", "done", "error"}:
+        raise HTTPException(status_code=400, detail="invalid status filter")
+    total, rows = _list_research_tasks(
+        task_type="factor_incremental",
+        page=page,
+        page_size=page_size,
+        status=safe_status,
+        mysql_cfg=mysql_cfg,
+    )
+    return {
+        "total": total,
+        "page": max(1, page),
+        "page_size": max(1, min(page_size, 100)),
+        "items": rows,
+    }
+
+
+@app.get("/api/backtest-guardrails")
+def backtest_guardrails(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    parameter_trials: int = 10,
+    commission_bps: float = 2.0,
+    slippage_bps: float = 4.0,
+    async_mode: bool = True,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    safe_trials = max(1, min(int(parameter_trials), 2000))
+    safe_comm = max(0.0, min(float(commission_bps), 200.0))
+    safe_slip = max(0.0, min(float(slippage_bps), 200.0))
+    safe_start, safe_end = _resolve_factor_research_range(
+        start_date=start_date,
+        end_date=end_date,
+        mysql_cfg=mysql_cfg,
+    )
+    if async_mode:
+        task_id = _submit_research_task(
+            task_type="backtest_guardrail",
+            start_date=safe_start,
+            end_date=safe_end,
+            top_k=0,
+            min_list_days=0,
+            parameter_trials=safe_trials,
+            commission_bps=safe_comm,
+            slippage_bps=safe_slip,
+            request_ip=(request.client.host if request.client else ""),
+            user_agent=request.headers.get("user-agent", ""),
+            mysql_cfg=mysql_cfg,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "task_id": task_id,
+                "status": "queued",
+                "task_type": "backtest_guardrail",
+                "poll_url": f"/api/backtest-guardrails/tasks/{task_id}",
+                "start_date": safe_start,
+                "end_date": safe_end,
+            },
+        )
+    payload, _metrics = _execute_backtest_guardrail_query(
+        start_date=safe_start,
+        end_date=safe_end,
+        parameter_trials=safe_trials,
+        commission_bps=safe_comm,
+        slippage_bps=safe_slip,
+        mysql_cfg=mysql_cfg,
+    )
+    payload["async_mode"] = False
+    return payload
+
+
+@app.get("/api/backtest-guardrails/tasks/{task_id}")
+def get_backtest_guardrail_task(
+    task_id: str,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    row = _fetch_research_task(task_id, mysql_cfg)
+    if not row or str(row.get("task_type") or "") != "backtest_guardrail":
+        raise HTTPException(status_code=404, detail="task not found")
+    status = str(row.get("status") or "")
+    base = {
+        "task_id": row.get("task_id"),
+        "task_type": "backtest_guardrail",
+        "status": status,
+        "start_date": row.get("start_date"),
+        "end_date": row.get("end_date"),
+        "params": {
+            "parameter_trials": int(row.get("parameter_trials") or 0),
+            "commission_bps": float(row.get("commission_bps") or 0),
+            "slippage_bps": float(row.get("slippage_bps") or 0),
+        },
+        "poll_url": f"/api/backtest-guardrails/tasks/{task_id}",
+        "created_at": row.get("created_at"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "metrics": {
+            "query_ms": row.get("query_ms"),
+            "total_ms": row.get("total_ms"),
+        },
+    }
+    if status in {"queued", "running"}:
+        return base
+    if status == "error":
+        return JSONResponse(
+            status_code=500,
+            content={**base, "error": row.get("error_message") or "task failed"},
+        )
+    payload = _load_research_task_result(str(row.get("result_file") or ""))
+    if not payload:
+        raise HTTPException(status_code=500, detail="task result missing")
+    payload.update(base)
+    payload["async_mode"] = True
+    return payload
+
+
+@app.get("/api/backtest-guardrails/task-history")
+def list_backtest_guardrail_task_history(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "",
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    safe_status = status.strip().lower()
+    if safe_status and safe_status not in {"queued", "running", "done", "error"}:
+        raise HTTPException(status_code=400, detail="invalid status filter")
+    total, rows = _list_research_tasks(
+        task_type="backtest_guardrail",
+        page=page,
+        page_size=page_size,
+        status=safe_status,
+        mysql_cfg=mysql_cfg,
+    )
+    return {
+        "total": total,
+        "page": max(1, page),
+        "page_size": max(1, min(page_size, 100)),
+        "items": rows,
     }
 
 
