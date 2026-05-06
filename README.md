@@ -173,6 +173,48 @@ python3 scripts/run_stock_moneyflow_recent_days.py
 - `--exchange SSE|SZSE`：交易日历交易所（默认 SSE）
 - `--days N`：自定义抓取最近 N 个交易日
 
+## 定时任务配置（crontab）
+
+当前使用 `crontab` 每个交易日下午自动执行 A 股与港股增量同步。
+
+编辑定时任务：
+
+```bash
+crontab -e
+```
+
+写入以下配置（当前线上示例）：
+
+```cron
+30 16 * * 1-5 /bin/bash -lc 'cd /home/admin/code/cc-connect-work-space/ashare_monitor && source ~/.zshrc >/dev/null 2>&1 || true && ./.venv/bin/python scripts/run_stock_sync_recent_days.py >> logs/stock_sync_recent_days_cron.log 2>&1'
+16 16 * * 1-5 /usr/bin/flock -n /tmp/hk_sync_all.lock /bin/bash -lc 'cd /home/admin/code/cc-connect-work-space/ashare_monitor && source ~/.zshrc >/dev/null 2>&1 || true && ./.venv/bin/python scripts/run_hk_sync_all_concurrent.py --provider akshare_sina --concurrency 8 --request-interval 0 --rate-limit-sleep 20 --retry-sleep 8 >> logs/hk_incremental_cron.log 2>&1'
+```
+
+说明：
+
+- 第一条：`16:30` 执行 A 股最近交易日增量同步。
+- 第二条：`16:16` 执行港股增量同步，使用 `flock` 锁避免任务重叠启动。
+- 两条任务都显式 `source ~/.zshrc`，保证 `MYSQL_*`/`TUSHARE_TOKEN` 等环境变量可用。
+
+查看当前生效配置：
+
+```bash
+crontab -l
+```
+
+查看执行日志：
+
+```bash
+tail -f logs/stock_sync_recent_days_cron.log
+tail -f logs/hk_incremental_cron.log
+```
+
+手动触发（排查时）：
+
+```bash
+/usr/bin/flock -n /tmp/hk_sync_all.lock /bin/bash -lc 'cd /home/admin/code/cc-connect-work-space/ashare_monitor && source ~/.zshrc >/dev/null 2>&1 || true && ./.venv/bin/python scripts/run_hk_sync_all_concurrent.py --provider akshare_sina --concurrency 8 --request-interval 0 --rate-limit-sleep 20 --retry-sleep 8'
+```
+
 ## 启动周期分析 Web 服务
 
 注意：
