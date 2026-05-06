@@ -13,6 +13,7 @@ from pandas.errors import EmptyDataError
 from .config import TUSHARE_TOKEN
 from .db import (
     execute_sql_file,
+    fetch_existing_daily_ts_codes,
     fetch_stock_basic_rows,
     fetch_stock_basic_ts_codes,
     upsert_market_breadth_daily_for_range,
@@ -22,7 +23,7 @@ from .db import (
 
 
 REQUEST_INTERVAL_SECONDS = 0.15
-RATE_LIMIT_SLEEP_SECONDS = 65
+RATE_LIMIT_SLEEP_SECONDS = 1
 GENERAL_RETRY_SLEEP_SECONDS = 5
 MAX_API_RETRIES = 5
 MONEYFLOW_FIELD_NAMES = (
@@ -343,6 +344,20 @@ def main():
     )
     log(
         f"trade_window start={start_date} end={real_end_date} trade_days={len(trade_days)} samples={trade_days[0]}..{trade_days[-1]}"
+    )
+
+    latest_trade_date = real_end_date
+    existing_latest_codes = fetch_existing_daily_ts_codes(latest_trade_date, latest_trade_date)
+    before_filter_count = len(pending_stocks)
+    if existing_latest_codes:
+        pending_stocks = [
+            (ts_code, name)
+            for ts_code, name in pending_stocks
+            if ts_code not in existing_latest_codes
+        ]
+    skipped_latest = before_filter_count - len(pending_stocks)
+    log(
+        f"latest_day_filter trade_date={latest_trade_date} skipped={skipped_latest} remaining={len(pending_stocks)}"
     )
     log(
         f"daily_progress total={len(pending_stocks)} days={args.days} concurrency={args.concurrency}"

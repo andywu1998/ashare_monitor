@@ -151,6 +151,19 @@ python3 scripts/run_stock_sync_all.py
 python3 scripts/run_stock_sync_all_concurrent.py --concurrency 4 --on-alert continue
 ```
 
+按最近交易日增量同步（`crontab` 常用）：
+
+```bash
+python3 scripts/run_stock_sync_recent_days.py
+```
+
+说明：
+
+- 实际实现文件是 `ashare_monitor/stock_sync/fetch_recent_days.py`。
+- 默认同步最近 `10` 个交易日（可通过脚本参数调整）。
+- 在真正请求 TuShare 之前，会先用最新交易日（例如 `2025-05-06`）过滤：
+  已经存在该日数据的股票会被直接跳过，只抓取缺失该日数据的股票。
+
 说明：
 
 - 首次运行会按 `ashare_monitor/stock_sync/schema.sql` 自动建表（`stock_basic` / `stock_daily`）
