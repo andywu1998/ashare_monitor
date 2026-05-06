@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 - 周期分析服务</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --line: #d9e0ea;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #1d4ed8;
+      --primary-hover: #1e40af;
+      --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 20% 20%, #dbeafe 0%, var(--bg) 40%);
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .card {
+      width: min(420px, 92vw);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+    .muted {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      font-size: 13px;
+      color: #334155;
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+    .actions {
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    button {
+      background: var(--primary);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--primary-hover); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { color: var(--muted); font-size: 13px; }
+    .error { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>登录</h1>
+    <p class="muted">请输入账号密码访问周期分析服务。</p>
+    <label for="username">用户名</label>
+    <input id="username" autocomplete="username" />
+    <label for="password">密码</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <div class="actions">
+      <button id="submitBtn" type="button">登录</button>
+      <span id="status" class="status">等待输入</span>
+    </div>
+    <div id="error" class="error"></div>
+  </div>
+  <script>
+    const usernameEl = document.getElementById("username");
+    const passwordEl = document.getElementById("password");
+    const submitBtn = document.getElementById("submitBtn");
+    const statusEl = document.getElementById("status");
+    const errEl = document.getElementById("error");
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function nextUrl() {
+      const params = new URLSearchParams(window.location.search || "");
+      const next = (params.get("next") || "/ui/").trim();
+      if (!next.startsWith("/")) return "/ui/";
+      if (next.includes("/ui/login.html")) return "/ui/";
+      return next;
+    }
+
+    async function checkExisting() {
+      try {
+        const resp = await fetch("/api/auth/me", { credentials: "same-origin" });
+        if (resp.ok) {
+          window.location.replace(nextUrl());
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    async function login() {
+      errEl.textContent = "";
+      const username = usernameEl.value.trim();
+      const password = passwordEl.value;
+      if (!username || !password) {
+        errEl.textContent = "请输入用户名和密码";
+        return;
+      }
+      submitBtn.disabled = true;
+      setStatus("登录中...");
+      try {
+        const resp = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "登录失败");
+        setStatus("登录成功");
+        window.location.replace(nextUrl());
+      } catch (e) {
+        errEl.textContent = String(e.message || e);
+        setStatus("登录失败");
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    submitBtn.addEventListener("click", login);
+    passwordEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
+    });
+    usernameEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
+    });
+    checkExisting();
+  </script>
+</body>
+</html>

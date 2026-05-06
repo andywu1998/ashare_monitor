@@ -6,9 +6,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from decimal import Decimal
+import hashlib
+import hmac
 import json
 import math
 import os
+import secrets
 from html import escape as html_escape
 import pymysql
 import sys
@@ -20,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -61,6 +64,11 @@ BREADTH_FACTOR_LOOKBACK_TRADE_DAYS = max(
 BREADTH_MAX_SAMPLE_POINTS = max(50, int(os.getenv("BREADTH_MAX_SAMPLE_POINTS", "300")))
 BREADTH_CACHE_TTL_SEC = max(30, int(os.getenv("BREADTH_CACHE_TTL_SEC", "600")))
 BREADTH_AUTO_ASYNC_SPAN_DAYS = max(60, int(os.getenv("BREADTH_AUTO_ASYNC_SPAN_DAYS", "220")))
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "ashare_sid")
+AUTH_SESSION_TTL_HOURS = max(1, int(os.getenv("AUTH_SESSION_TTL_HOURS", "24")))
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax").strip().lower() or "lax"
+AUTH_PASSWORD_PBKDF2_ITERATIONS = max(100_000, int(os.getenv("AUTH_PASSWORD_PBKDF2_ITERATIONS", "240000")))
 
 UPTREND_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=UPTREND_TASK_WORKERS)
 UPTREND_TABLE_LOCK = Lock()
@@ -76,6 +84,8 @@ RESEARCH_TABLE_LOCK = Lock()
 RESEARCH_TABLE_READY: set[tuple[str, int, str, str]] = set()
 CYCLE_EVENT_TABLE_LOCK = Lock()
 CYCLE_EVENT_TABLE_READY: set[tuple[str, int, str, str]] = set()
+AUTH_TABLE_LOCK = Lock()
+AUTH_TABLE_READY: set[tuple[str, int, str, str]] = set()
 BREADTH_CACHE_LOCK = Lock()
 BREADTH_RESULT_CACHE: dict[str, tuple[float, str]] = {}
 REPORT_CACHE_LOCK = Lock()
@@ -89,6 +99,40 @@ def _normalize_password(raw: Optional[str]) -> str:
     if not value or value in placeholders:
         return ""
     return value
+
+
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _hash_password(password: str) -> str:
+    safe_password = password or ""
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        safe_password.encode("utf-8"),
+        salt.encode("utf-8"),
+        AUTH_PASSWORD_PBKDF2_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${AUTH_PASSWORD_PBKDF2_ITERATIONS}${salt}${digest}"
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    safe_password = password or ""
+    try:
+        algo, iter_s, salt, digest = str(encoded or "").split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        iters = int(iter_s)
+    except Exception:
+        return False
+    calc = hashlib.pbkdf2_hmac(
+        "sha256",
+        safe_password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iters,
+    ).hex()
+    return hmac.compare_digest(calc, digest)
 
 
 def _jsonify_value(value: Any) -> Any:
@@ -300,6 +344,264 @@ def _mysql_connect(mysql_cfg: dict):
         autocommit=False,
         cursorclass=pymysql.cursors.DictCursor,
     )
+
+
+def _default_mysql_cfg_for_auth() -> dict:
+    password = _normalize_password(DEFAULT_MYSQL_PASSWORD)
+    if not password:
+        raise RuntimeError("auth init failed: missing CYCLE_WEB_MYSQL_PASSWORD/MYSQL_PASSWORD")
+    return {
+        "host": DEFAULT_MYSQL_HOST,
+        "port": int(DEFAULT_MYSQL_PORT),
+        "user": DEFAULT_MYSQL_USER,
+        "password": password,
+        "database": DEFAULT_MYSQL_DB,
+    }
+
+
+def _safe_samesite() -> str:
+    safe = AUTH_COOKIE_SAMESITE.lower()
+    if safe not in {"lax", "strict", "none"}:
+        safe = "lax"
+    return safe
+
+
+def _ensure_auth_tables(mysql_cfg: dict) -> None:
+    key = (
+        str(mysql_cfg["host"]),
+        int(mysql_cfg.get("port", DEFAULT_MYSQL_PORT)),
+        str(mysql_cfg["user"]),
+        str(mysql_cfg["database"]),
+    )
+    with AUTH_TABLE_LOCK:
+        if key in AUTH_TABLE_READY:
+            return
+
+    user_sql = """
+    CREATE TABLE IF NOT EXISTS auth_user (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      username VARCHAR(64) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(16) NOT NULL DEFAULT 'user',
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      last_login_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_username (username),
+      KEY idx_role_active (role, is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+    session_sql = """
+    CREATE TABLE IF NOT EXISTS auth_session (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      user_id BIGINT UNSIGNED NOT NULL,
+      token_hash CHAR(64) NOT NULL,
+      expires_at DATETIME(3) NOT NULL,
+      revoked_at DATETIME(3) NULL,
+      ip VARCHAR(64) NULL,
+      user_agent VARCHAR(255) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_token_hash (token_hash),
+      KEY idx_user_id (user_id),
+      KEY idx_expires_at (expires_at),
+      KEY idx_revoked_at (revoked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+    login_log_sql = """
+    CREATE TABLE IF NOT EXISTS auth_login_log (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      username VARCHAR(64) NOT NULL,
+      success TINYINT(1) NOT NULL,
+      ip VARCHAR(64) NULL,
+      user_agent VARCHAR(255) NULL,
+      reason VARCHAR(64) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      KEY idx_username_created (username, created_at),
+      KEY idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(user_sql)
+            cursor.execute(session_sql)
+            cursor.execute(login_log_sql)
+        conn.commit()
+
+    with AUTH_TABLE_LOCK:
+        AUTH_TABLE_READY.add(key)
+
+
+def _create_initial_admin_if_needed(mysql_cfg: dict) -> None:
+    username = (os.getenv("AUTH_INIT_ADMIN_USERNAME", "") or "").strip()
+    password = (os.getenv("AUTH_INIT_ADMIN_PASSWORD", "") or "").strip()
+    if not username or not password:
+        return
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM auth_user WHERE username=%s LIMIT 1", (username,))
+            row = cursor.fetchone()
+            if row:
+                return
+            cursor.execute(
+                """
+                INSERT INTO auth_user (username, password_hash, role, is_active)
+                VALUES (%s, %s, 'admin', 1)
+                """,
+                (username, _hash_password(password)),
+            )
+        conn.commit()
+
+
+def _auth_log(mysql_cfg: dict, username: str, success: bool, ip: str, user_agent: str, reason: str = "") -> None:
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO auth_login_log (username, success, ip, user_agent, reason)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    (username or "")[:64],
+                    1 if success else 0,
+                    (ip or "")[:64] or None,
+                    (user_agent or "")[:255] or None,
+                    (reason or "")[:64] or None,
+                ),
+            )
+        conn.commit()
+
+
+def _get_user_by_username(mysql_cfg: dict, username: str) -> Optional[dict]:
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, username, password_hash, role, is_active, created_at, updated_at, last_login_at
+                FROM auth_user
+                WHERE username = %s
+                LIMIT 1
+                """,
+                (username,),
+            )
+            row = cursor.fetchone()
+    return _jsonify_row(row) if row else None
+
+
+def _get_user_by_id(mysql_cfg: dict, user_id: int) -> Optional[dict]:
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, username, role, is_active, created_at, updated_at, last_login_at
+                FROM auth_user
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (int(user_id),),
+            )
+            row = cursor.fetchone()
+    return _jsonify_row(row) if row else None
+
+
+def _create_auth_session(mysql_cfg: dict, *, user_id: int, ip: str, user_agent: str) -> str:
+    _ensure_auth_tables(mysql_cfg)
+    token = secrets.token_urlsafe(48)
+    token_hash = _hash_session_token(token)
+    ttl = timedelta(hours=AUTH_SESSION_TTL_HOURS)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO auth_session (user_id, token_hash, expires_at, ip, user_agent)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    int(user_id),
+                    token_hash,
+                    datetime.now() + ttl,
+                    (ip or "")[:64] or None,
+                    (user_agent or "")[:255] or None,
+                ),
+            )
+            cursor.execute(
+                "UPDATE auth_user SET last_login_at=NOW(3) WHERE id=%s",
+                (int(user_id),),
+            )
+        conn.commit()
+    return token
+
+
+def _revoke_auth_session(mysql_cfg: dict, token: str) -> None:
+    token_hash = _hash_session_token(token)
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE auth_session
+                SET revoked_at = NOW(3)
+                WHERE token_hash = %s
+                  AND revoked_at IS NULL
+                """,
+                (token_hash,),
+            )
+        conn.commit()
+
+
+def _resolve_session_user(mysql_cfg: dict, token: str) -> Optional[dict]:
+    safe_token = (token or "").strip()
+    if not safe_token:
+        return None
+    token_hash = _hash_session_token(safe_token)
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                  s.id AS session_id,
+                  s.user_id,
+                  s.expires_at,
+                  u.username,
+                  u.role,
+                  u.is_active
+                FROM auth_session s
+                JOIN auth_user u ON u.id = s.user_id
+                WHERE s.token_hash = %s
+                  AND s.revoked_at IS NULL
+                  AND s.expires_at > NOW(3)
+                  AND u.is_active = 1
+                LIMIT 1
+                """,
+                (token_hash,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            cursor.execute("UPDATE auth_session SET last_seen_at=NOW(3) WHERE id=%s", (row["session_id"],))
+        conn.commit()
+    return _jsonify_row(row)
+
+
+def _require_auth_user(request: Request) -> dict:
+    user = getattr(request.state, "auth_user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return user
+
+
+def _require_admin_user(request: Request) -> dict:
+    user = _require_auth_user(request)
+    role = str(user.get("role") or "").lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    return user
 
 
 def _ensure_uptrend_tables(mysql_cfg: dict) -> None:
@@ -2864,6 +3166,50 @@ app = FastAPI(title="Cycle Report Service", version="0.1.0")
 app.mount("/ui", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
 
 
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path or "/"
+    method = request.method.upper()
+    needs_auth = path.startswith("/ui") or path.startswith("/api")
+    if not needs_auth:
+        return await call_next(request)
+
+    allow_no_auth = (
+        path == "/api/health"
+        or path == "/api/auth/login"
+        or path == "/api/auth/logout"
+        or path == "/ui/login.html"
+        or path == "/ui/login"
+    )
+    if allow_no_auth:
+        return await call_next(request)
+
+    try:
+        mysql_cfg = _default_mysql_cfg_for_auth()
+        _create_initial_admin_if_needed(mysql_cfg)
+    except Exception as exc:
+        if path.startswith("/api"):
+            return JSONResponse(status_code=500, content={"detail": f"auth bootstrap failed: {exc}"})
+        return JSONResponse(status_code=500, content={"detail": f"auth bootstrap failed: {exc}"})
+
+    sid = request.cookies.get(AUTH_COOKIE_NAME) or ""
+    user = _resolve_session_user(mysql_cfg, sid)
+    if not user:
+        if path.startswith("/api"):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        if method == "GET":
+            return RedirectResponse(url="/ui/login.html", status_code=302)
+        return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+
+    request.state.auth_user = {
+        "user_id": int(user.get("user_id") or 0),
+        "username": user.get("username"),
+        "role": user.get("role"),
+        "session_id": user.get("session_id"),
+    }
+    return await call_next(request)
+
+
 class GenerateRequest(BaseModel):
     name: str = Field(..., description="Stock name, e.g. 中际旭创")
     threshold: float = Field(0.08, ge=0.005, le=0.8, description="ZigZag threshold")
@@ -2919,6 +3265,26 @@ class EventCreateRequest(BaseModel):
     global_event: bool = Field(False, description="True means visible to all assets")
     tags: Optional[str] = Field(None, max_length=255)
     source: str = Field("manual", max_length=32)
+
+
+class AuthLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class AdminCreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=3, max_length=128)
+    role: str = Field("user", description="admin/user")
+
+
+class AdminUpdateUserRequest(BaseModel):
+    role: Optional[str] = Field(None, description="admin/user")
+    is_active: Optional[bool] = None
+
+
+class AdminResetPasswordRequest(BaseModel):
+    password: str = Field(..., min_length=3, max_length=128)
 
 
 def _save_report(report_id: str, html: str, metadata: dict) -> Path:
@@ -3336,6 +3702,186 @@ def _submit_report_task(
 
 @app.get("/api/health")
 def health():
+    return {"ok": True}
+
+
+@app.post("/api/auth/login")
+def auth_login(req: AuthLoginRequest, request: Request):
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    _create_initial_admin_if_needed(mysql_cfg)
+    username = (req.username or "").strip()
+    password = req.password or ""
+    ip = request.client.host if request.client else ""
+    user_agent = request.headers.get("user-agent", "")
+    user = _get_user_by_username(mysql_cfg, username)
+    if not user:
+        _auth_log(mysql_cfg, username, False, ip, user_agent, reason="user_not_found")
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    if not bool(user.get("is_active")):
+        _auth_log(mysql_cfg, username, False, ip, user_agent, reason="user_inactive")
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    if not _verify_password(password, str(user.get("password_hash") or "")):
+        _auth_log(mysql_cfg, username, False, ip, user_agent, reason="password_mismatch")
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = _create_auth_session(
+        mysql_cfg,
+        user_id=int(user.get("id") or 0),
+        ip=ip or "",
+        user_agent=user_agent or "",
+    )
+    _auth_log(mysql_cfg, username, True, ip, user_agent, reason="ok")
+    payload = {
+        "ok": True,
+        "user": {
+            "id": int(user.get("id") or 0),
+            "username": user.get("username"),
+            "role": user.get("role"),
+            "is_active": bool(user.get("is_active")),
+        },
+    }
+    response = JSONResponse(content=payload)
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=AUTH_SESSION_TTL_HOURS * 3600,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite=_safe_samesite(),
+        path="/",
+    )
+    return response
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    auth_user = _require_auth_user(request)
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    user = _get_user_by_id(mysql_cfg, int(auth_user.get("user_id") or 0))
+    if not user:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return {
+        "id": int(user.get("id") or 0),
+        "username": user.get("username"),
+        "role": user.get("role"),
+        "is_active": bool(user.get("is_active")),
+        "last_login_at": user.get("last_login_at"),
+    }
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    sid = request.cookies.get(AUTH_COOKIE_NAME) or ""
+    if sid:
+        try:
+            mysql_cfg = _default_mysql_cfg_for_auth()
+            _revoke_auth_session(mysql_cfg, sid)
+        except Exception:
+            pass
+    response = JSONResponse(content={"ok": True})
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/admin/users")
+def admin_list_users(request: Request):
+    _require_admin_user(request)
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, username, role, is_active, created_at, updated_at, last_login_at
+                FROM auth_user
+                ORDER BY id ASC
+                """
+            )
+            rows = cursor.fetchall() or []
+    return {"items": [_jsonify_row(r) for r in rows], "count": len(rows)}
+
+
+@app.post("/api/admin/users")
+def admin_create_user(req: AdminCreateUserRequest, request: Request):
+    _require_admin_user(request)
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    _ensure_auth_tables(mysql_cfg)
+    username = (req.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+    safe_role = (req.role or "user").strip().lower()
+    if safe_role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="role must be admin/user")
+
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM auth_user WHERE username=%s LIMIT 1", (username,))
+            if cursor.fetchone():
+                raise HTTPException(status_code=409, detail="username already exists")
+            cursor.execute(
+                """
+                INSERT INTO auth_user (username, password_hash, role, is_active)
+                VALUES (%s, %s, %s, 1)
+                """,
+                (username, _hash_password(req.password), safe_role),
+            )
+            new_id = int(cursor.lastrowid or 0)
+        conn.commit()
+    user = _get_user_by_id(mysql_cfg, new_id)
+    return {"ok": True, "item": user}
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_update_user(user_id: int, req: AdminUpdateUserRequest, request: Request):
+    me = _require_admin_user(request)
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    _ensure_auth_tables(mysql_cfg)
+    update_fields: list[str] = []
+    args: list[Any] = []
+
+    if req.role is not None:
+        safe_role = str(req.role or "").strip().lower()
+        if safe_role not in {"admin", "user"}:
+            raise HTTPException(status_code=400, detail="role must be admin/user")
+        update_fields.append("role=%s")
+        args.append(safe_role)
+    if req.is_active is not None:
+        update_fields.append("is_active=%s")
+        args.append(1 if req.is_active else 0)
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    if int(user_id) == int(me.get("user_id") or 0) and req.is_active is False:
+        raise HTTPException(status_code=400, detail="cannot deactivate current user")
+
+    sql = f"UPDATE auth_user SET {', '.join(update_fields)}, updated_at=NOW(3) WHERE id=%s"
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, tuple(args + [int(user_id)]))
+            if int(cursor.rowcount or 0) <= 0:
+                raise HTTPException(status_code=404, detail="user not found")
+        conn.commit()
+    user = _get_user_by_id(mysql_cfg, int(user_id))
+    return {"ok": True, "item": user}
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+def admin_reset_password(user_id: int, req: AdminResetPasswordRequest, request: Request):
+    _require_admin_user(request)
+    mysql_cfg = _default_mysql_cfg_for_auth()
+    _ensure_auth_tables(mysql_cfg)
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE auth_user
+                SET password_hash=%s, updated_at=NOW(3)
+                WHERE id=%s
+                """,
+                (_hash_password(req.password), int(user_id)),
+            )
+            if int(cursor.rowcount or 0) <= 0:
+                raise HTTPException(status_code=404, detail="user not found")
+        conn.commit()
     return {"ok": True}
 
 

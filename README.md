@@ -162,13 +162,16 @@ python3 scripts/run_stock_sync_all_concurrent.py --concurrency 4 --on-alert cont
 按交易日逐天拉取，避免 TuShare `moneyflow` 多日请求被 6000 行上限截断：
 
 ```bash
-python3 scripts/run_stock_moneyflow_recent_days.py --days 30
+python3 scripts/run_stock_moneyflow_recent_days.py
 ```
+
+默认抓取最近 `252` 个交易日（约 1 个交易年）。
 
 可选参数：
 
 - `--end-date YYYY-MM-DD`：指定结束日期（默认今天）
 - `--exchange SSE|SZSE`：交易日历交易所（默认 SSE）
+- `--days N`：自定义抓取最近 N 个交易日
 
 ## 启动周期分析 Web 服务
 
@@ -204,3 +207,28 @@ sudo loginctl enable-linger admin
 
 - UI：`http://127.0.0.1:8888/ui/`
 - 健康检查：`http://127.0.0.1:8888/api/health`
+
+## 登录认证（多用户）
+
+Web 服务已启用登录鉴权，未登录无法访问 `/ui` 和业务 `/api`。
+
+首次创建管理员（示例）：
+
+```bash
+.venv/bin/python scripts/init_auth_admin.py --username admin --password 'Admin@123456'
+```
+
+重置管理员密码：
+
+```bash
+.venv/bin/python scripts/init_auth_admin.py --username admin --password 'NewStrongPass' --reset
+```
+
+可选环境变量（由 `start_service.sh` 注入服务环境）：
+
+- `AUTH_COOKIE_NAME`（默认 `ashare_sid`）
+- `AUTH_SESSION_TTL_HOURS`（默认 `24`）
+- `AUTH_COOKIE_SECURE`（默认 `false`）
+- `AUTH_COOKIE_SAMESITE`（默认 `lax`）
+- `AUTH_PASSWORD_PBKDF2_ITERATIONS`（默认 `240000`）
+- `AUTH_INIT_ADMIN_USERNAME` / `AUTH_INIT_ADMIN_PASSWORD`（可选：服务启动时自动初始化管理员）

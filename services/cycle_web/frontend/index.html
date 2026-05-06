@@ -841,6 +841,31 @@
       border-color: #fcd34d;
       background: #fffbeb;
     }
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 8px 0 14px;
+      padding: 8px 10px;
+      border: 1px solid #dbe3ef;
+      border-radius: 10px;
+      background: #f8fbff;
+    }
+    .auth-user {
+      font-size: 13px;
+      color: #1e293b;
+    }
+    .auth-role {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+      background: #dbeafe;
+      font-size: 11px;
+    }
     @media (max-width: 1180px) {
       .layout {
         grid-template-columns: 1fr;
@@ -879,6 +904,13 @@
       <div class="left-col">
         <div class="card">
           <h1>周期分析服务</h1>
+          <div class="auth-bar">
+            <div class="auth-user">
+              当前用户：<span id="authUserName">-</span>
+              <span id="authUserRole" class="auth-role">-</span>
+            </div>
+            <button id="logoutBtn" class="secondary" type="button">退出登录</button>
+          </div>
           <div class="tabs">
             <button class="tab-btn active" data-tab="single">A股周期分析服务</button>
             <button class="tab-btn" data-tab="uptrend">上行周期股票筛选</button>
@@ -886,6 +918,7 @@
             <button class="tab-btn" data-tab="fundUptrend">上行周期基金筛选</button>
             <button class="tab-btn" data-tab="breadth">历史涨跌统计</button>
             <button class="tab-btn" data-tab="factorLab">因子与回测</button>
+            <button id="adminTabBtn" class="tab-btn hidden" data-tab="adminUsers">用户管理</button>
           </div>
 
           <div id="panelSingle" class="tab-panel active">
@@ -1348,6 +1381,71 @@
             </div>
           </div>
 
+          <div id="panelAdminUsers" class="tab-panel">
+            <div class="section-title">用户列表</div>
+            <div class="actions">
+              <button id="adminRefreshBtn" type="button">刷新用户</button>
+              <span id="adminStatus" class="muted">等待加载</span>
+            </div>
+            <div id="adminError" class="error"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>角色</th>
+                    <th>状态</th>
+                    <th>最近登录</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="adminUserBody">
+                  <tr><td colspan="6" class="muted">点击“刷新用户”加载</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="section-title">新增用户</div>
+            <div class="grid">
+              <div>
+                <label>用户名</label>
+                <input id="adminNewUsername" />
+              </div>
+              <div>
+                <label>密码</label>
+                <input id="adminNewPassword" type="password" />
+              </div>
+              <div>
+                <label>角色</label>
+                <select id="adminNewRole">
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <button id="adminCreateBtn" type="button">创建用户</button>
+              <span id="adminCreateStatus" class="muted">等待创建</span>
+            </div>
+
+            <div class="section-title">重置密码</div>
+            <div class="grid">
+              <div>
+                <label>用户ID</label>
+                <input id="adminResetUserId" type="number" step="1" />
+              </div>
+              <div>
+                <label>新密码</label>
+                <input id="adminResetPassword" type="password" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="adminResetBtn" type="button">重置密码</button>
+              <span id="adminResetStatus" class="muted">等待操作</span>
+            </div>
+          </div>
+
           <div class="split-line"></div>
           <div id="error" class="error"></div>
           <div id="summary" class="summary"></div>
@@ -1500,6 +1598,7 @@
       document.write('<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"><\\/script>');
     }
   </script>
+  <script src="/ui/auth.js"></script>
   <script>
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
     const panelSingle = document.getElementById("panelSingle");
@@ -1508,6 +1607,11 @@
     const panelFundUptrend = document.getElementById("panelFundUptrend");
     const panelBreadth = document.getElementById("panelBreadth");
     const panelFactorLab = document.getElementById("panelFactorLab");
+    const panelAdminUsers = document.getElementById("panelAdminUsers");
+    const adminTabBtn = document.getElementById("adminTabBtn");
+    const authUserNameEl = document.getElementById("authUserName");
+    const authUserRoleEl = document.getElementById("authUserRole");
+    const logoutBtn = document.getElementById("logoutBtn");
     const runBtn = document.getElementById("runBtn");
     const singleStatusEl = document.getElementById("singleStatus");
     const fundRunBtn = document.getElementById("fundRunBtn");
@@ -1567,6 +1671,19 @@
     const refreshGuardHistoryBtn = document.getElementById("refreshGuardHistoryBtn");
     const guardHistoryStatusText = document.getElementById("guardHistoryStatusText");
     const guardHistoryBody = document.getElementById("guardHistoryBody");
+    const adminRefreshBtn = document.getElementById("adminRefreshBtn");
+    const adminStatusEl = document.getElementById("adminStatus");
+    const adminErrorEl = document.getElementById("adminError");
+    const adminUserBody = document.getElementById("adminUserBody");
+    const adminNewUsernameEl = document.getElementById("adminNewUsername");
+    const adminNewPasswordEl = document.getElementById("adminNewPassword");
+    const adminNewRoleEl = document.getElementById("adminNewRole");
+    const adminCreateBtn = document.getElementById("adminCreateBtn");
+    const adminCreateStatusEl = document.getElementById("adminCreateStatus");
+    const adminResetUserIdEl = document.getElementById("adminResetUserId");
+    const adminResetPasswordEl = document.getElementById("adminResetPassword");
+    const adminResetBtn = document.getElementById("adminResetBtn");
+    const adminResetStatusEl = document.getElementById("adminResetStatus");
     const previewModeEl = document.getElementById("previewMode");
     const openBtn = document.getElementById("openBtn");
     const fsBtn = document.getElementById("fsBtn");
@@ -1634,6 +1751,8 @@
     let factorHistoryItems = [];
     let guardrailItems = [];
     let guardHistoryItems = [];
+    let adminUsers = [];
+    let currentAuthUser = null;
     let currentHtmlUrl = "";
     let currentReportData = null;
     let reportRenderMode = "none";
@@ -1739,6 +1858,32 @@
       guardHistoryStatusText.textContent = text;
     }
 
+    function setAdminStatus(text, cls) {
+      adminStatusEl.className = cls || "muted";
+      adminStatusEl.textContent = text;
+    }
+
+    function setAdminCreateStatus(text, cls) {
+      adminCreateStatusEl.className = cls || "muted";
+      adminCreateStatusEl.textContent = text;
+    }
+
+    function setAdminResetStatus(text, cls) {
+      adminResetStatusEl.className = cls || "muted";
+      adminResetStatusEl.textContent = text;
+    }
+
+    function applyAuthUser(user) {
+      currentAuthUser = user || null;
+      authUserNameEl.textContent = user?.username || "-";
+      authUserRoleEl.textContent = user?.role || "-";
+      const isAdmin = (user?.role || "").toLowerCase() === "admin";
+      adminTabBtn.classList.toggle("hidden", !isAdmin);
+      if (!isAdmin && panelAdminUsers.classList.contains("active")) {
+        switchTab("single");
+      }
+    }
+
     function getVal(id) { return document.getElementById(id).value; }
     function toNum(id) { return Number(getVal(id)); }
 
@@ -1752,6 +1897,7 @@
       panelFundUptrend.classList.toggle("active", tab === "fundUptrend");
       panelBreadth.classList.toggle("active", tab === "breadth");
       panelFactorLab.classList.toggle("active", tab === "factorLab");
+      panelAdminUsers.classList.toggle("active", tab === "adminUsers");
     }
 
     function adjustIframeHeight() {
@@ -5063,6 +5209,110 @@
       }
     }
 
+    async function fetchJson(url, options) {
+      const resp = await fetch(url, options);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || data.error || "request failed");
+      return data;
+    }
+
+    function renderAdminUsers(items) {
+      if (!items.length) {
+        adminUserBody.innerHTML = '<tr><td colspan="6" class="muted">暂无用户</td></tr>';
+        return;
+      }
+      adminUserBody.innerHTML = items.map((u) => {
+        const id = Number(u.id || 0);
+        const active = Boolean(u.is_active);
+        return `
+          <tr data-admin-user-id="${id}">
+            <td>${id}</td>
+            <td>${escHtml(u.username || "-")}</td>
+            <td>
+              <select data-action="role" data-user-id="${id}">
+                <option value="user" ${u.role === "user" ? "selected" : ""}>user</option>
+                <option value="admin" ${u.role === "admin" ? "selected" : ""}>admin</option>
+              </select>
+            </td>
+            <td>${active ? '<span class="tag done">active</span>' : '<span class="tag error">disabled</span>'}</td>
+            <td>${escHtml(fmtDateTime(u.last_login_at))}</td>
+            <td>
+              <button data-action="toggle" data-user-id="${id}" class="secondary" type="button">${active ? "禁用" : "启用"}</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function loadAdminUsers() {
+      if (!currentAuthUser || currentAuthUser.role !== "admin") return;
+      setAdminStatus("加载中...", "muted");
+      adminErrorEl.textContent = "";
+      try {
+        const data = await fetchJson("/api/admin/users");
+        adminUsers = data.items || [];
+        renderAdminUsers(adminUsers);
+        setAdminStatus(`已加载 ${adminUsers.length} 个用户`, "ok");
+      } catch (e) {
+        adminUsers = [];
+        renderAdminUsers(adminUsers);
+        setAdminStatus("加载失败", "error");
+        adminErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function createAdminUser() {
+      adminErrorEl.textContent = "";
+      setAdminCreateStatus("创建中...", "muted");
+      try {
+        const username = (adminNewUsernameEl.value || "").trim();
+        const password = adminNewPasswordEl.value || "";
+        const role = (adminNewRoleEl.value || "user").trim();
+        if (!username || !password) throw new Error("用户名和密码必填");
+        await fetchJson("/api/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password, role }),
+        });
+        adminNewUsernameEl.value = "";
+        adminNewPasswordEl.value = "";
+        setAdminCreateStatus("创建成功", "ok");
+        await loadAdminUsers();
+      } catch (e) {
+        setAdminCreateStatus("创建失败", "error");
+        adminErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function resetAdminPassword() {
+      adminErrorEl.textContent = "";
+      setAdminResetStatus("提交中...", "muted");
+      try {
+        const userId = Number(adminResetUserIdEl.value || 0);
+        const password = adminResetPasswordEl.value || "";
+        if (!userId || !password) throw new Error("用户ID和新密码必填");
+        await fetchJson(`/api/admin/users/${userId}/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        adminResetPasswordEl.value = "";
+        setAdminResetStatus("重置成功", "ok");
+      } catch (e) {
+        setAdminResetStatus("重置失败", "error");
+        adminErrorEl.textContent = String(e.message || e);
+      }
+    }
+
+    async function updateAdminUser(userId, payload) {
+      await fetchJson(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      await loadAdminUsers();
+    }
+
     function renderHistoryRows(items) {
       if (!items.length) {
         historyBody.innerHTML = '<tr><td colspan="6" class="muted">暂无历史任务</td></tr>';
@@ -5246,6 +5496,16 @@
       renderFactorLabSummary(null, "guardrail");
       setGuardStatus("已清空", "muted");
     });
+    adminRefreshBtn.addEventListener("click", loadAdminUsers);
+    adminCreateBtn.addEventListener("click", createAdminUser);
+    adminResetBtn.addEventListener("click", resetAdminPassword);
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await window.__auth.logout();
+      } catch (_) {
+        window.location.href = "/ui/login.html";
+      }
+    });
 
     historyBody.addEventListener("click", async (event) => {
       const row = event.target.closest("tr[data-task-id]");
@@ -5336,6 +5596,32 @@
       Array.from(guardHistoryBody.querySelectorAll("tr")).forEach((tr) => tr.classList.remove("selected"));
       row.classList.add("selected");
       await loadGuardTask(taskId);
+    });
+    adminUserBody.addEventListener("click", async (event) => {
+      const btn = event.target.closest("button[data-action='toggle']");
+      if (!btn) return;
+      const userId = Number(btn.dataset.userId || 0);
+      if (!userId) return;
+      const current = adminUsers.find((x) => Number(x.id || 0) === userId);
+      if (!current) return;
+      try {
+        await updateAdminUser(userId, { is_active: !Boolean(current.is_active) });
+      } catch (e) {
+        adminErrorEl.textContent = String(e.message || e);
+      }
+    });
+    adminUserBody.addEventListener("change", async (event) => {
+      const sel = event.target.closest("select[data-action='role']");
+      if (!sel) return;
+      const userId = Number(sel.dataset.userId || 0);
+      const role = String(sel.value || "user");
+      if (!userId) return;
+      try {
+        await updateAdminUser(userId, { role });
+      } catch (e) {
+        adminErrorEl.textContent = String(e.message || e);
+        await loadAdminUsers();
+      }
     });
 
     factorBody.addEventListener("click", async (event) => {
@@ -5475,23 +5761,33 @@
       }, 120);
     });
 
-    switchTab("single");
-    clearCycleReportView();
-    bindCycleInteractions();
-    cycleUpdateStructureToggleBtn();
-    bindSuggestInput(nameInput, nameSuggestEl, "S");
-    bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
-    bindEventAssetSuggestInput();
-    document.addEventListener("click", (event) => {
-      if (!event.target.closest(".suggest-wrap")) {
-        hideAllSuggestBoxes();
+    async function boot() {
+      const me = await window.__auth.requireAuth();
+      if (!me) return;
+      applyAuthUser(me);
+      switchTab("single");
+      clearCycleReportView();
+      bindCycleInteractions();
+      cycleUpdateStructureToggleBtn();
+      bindSuggestInput(nameInput, nameSuggestEl, "S");
+      bindSuggestInput(fundNameInput, fundNameSuggestEl, "F");
+      bindEventAssetSuggestInput();
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest(".suggest-wrap")) {
+          hideAllSuggestBoxes();
+        }
+      });
+      loadTaskHistory();
+      loadFundTaskHistory();
+      loadBreadthTaskHistory();
+      loadFactorTaskHistory();
+      loadGuardrailTaskHistory();
+      if ((me.role || "").toLowerCase() === "admin") {
+        await loadAdminUsers();
       }
-    });
-    loadTaskHistory();
-    loadFundTaskHistory();
-    loadBreadthTaskHistory();
-    loadFactorTaskHistory();
-    loadGuardrailTaskHistory();
+    }
+
+    boot();
   </script>
 </body>
 </html>

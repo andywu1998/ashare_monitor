@@ -33,6 +33,13 @@ load_env_from_zshrc() {
   env_snapshot=$( (set +u; . "$HOME/.zshrc" >/dev/null 2>&1; env) 2>/dev/null || true )
 
   for key in \
+    AUTH_COOKIE_NAME \
+    AUTH_SESSION_TTL_HOURS \
+    AUTH_COOKIE_SECURE \
+    AUTH_COOKIE_SAMESITE \
+    AUTH_PASSWORD_PBKDF2_ITERATIONS \
+    AUTH_INIT_ADMIN_USERNAME \
+    AUTH_INIT_ADMIN_PASSWORD \
     CYCLE_WEB_MYSQL_HOST \
     CYCLE_WEB_MYSQL_PORT \
     CYCLE_WEB_MYSQL_USER \
@@ -119,6 +126,13 @@ values = {
     "MYSQL_USER": user,
     "MYSQL_DATABASE": database,
     "MYSQL_PASSWORD": password,
+    "AUTH_COOKIE_NAME": pick("AUTH_COOKIE_NAME", default="ashare_sid"),
+    "AUTH_SESSION_TTL_HOURS": pick("AUTH_SESSION_TTL_HOURS", default="24"),
+    "AUTH_COOKIE_SECURE": pick("AUTH_COOKIE_SECURE", default="false"),
+    "AUTH_COOKIE_SAMESITE": pick("AUTH_COOKIE_SAMESITE", default="lax"),
+    "AUTH_PASSWORD_PBKDF2_ITERATIONS": pick("AUTH_PASSWORD_PBKDF2_ITERATIONS", default="240000"),
+    "AUTH_INIT_ADMIN_USERNAME": pick("AUTH_INIT_ADMIN_USERNAME", default=""),
+    "AUTH_INIT_ADMIN_PASSWORD": pick("AUTH_INIT_ADMIN_PASSWORD", default=""),
 }
 
 with path.open("w", encoding="utf-8") as f:
