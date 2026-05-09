@@ -559,10 +559,24 @@
       color: #334155;
       background: #f8fafc;
       cursor: pointer;
-      max-width: 300px;
+      max-width: 360px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .event-badge-label {
+      min-width: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .event-badge-ret {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .event-badge-ret.na {
+      color: #94a3b8;
     }
     .event-badge.global {
       border-color: #93c5fd;
@@ -4132,6 +4146,32 @@
       return `${title.slice(0, 10)}...`;
     }
 
+    function cycleGetEventSincePerf(item) {
+      const safeDate = String(item?.trade_date || "");
+      const rows = Array.isArray(lwCandleRows) ? lwCandleRows : [];
+      if (!safeDate || !rows.length) {
+        return { available: false };
+      }
+      const latest = rows[rows.length - 1] || null;
+      const hit = cycleGetCandleRowByDate(safeDate);
+      if (!latest || !hit?.row) {
+        return { available: false };
+      }
+      const eventClose = Number(hit.row.close);
+      const latestClose = Number(latest.close);
+      if (!Number.isFinite(eventClose) || !Number.isFinite(latestClose) || eventClose === 0) {
+        return { available: false };
+      }
+      const pct = ((latestClose - eventClose) / eventClose) * 100;
+      return {
+        available: true,
+        pct,
+        eventClose,
+        latestClose,
+        latestDate: String(latest.trade_date || ""),
+      };
+    }
+
     function renderEventDetail(item) {
       if (!eventDetailEl || !eventDetailTitleEl || !eventDetailMetaEl || !eventDetailContentEl) return;
       if (!item) {
@@ -4150,7 +4190,11 @@
       }
       const scopeText = item.global_event ? "全局事件" : `关联 ${Array.isArray(item.ts_codes) ? item.ts_codes.length : 0} 只股票`;
       const tagsText = item.tags ? ` | 标签: ${item.tags}` : "";
-      eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}`;
+      const perf = cycleGetEventSincePerf(item);
+      const perfText = perf.available
+        ? ` | 至今涨幅: ${cycleFormatPct(perf.pct)}（${cycleFormatPrice(perf.eventClose)}→${cycleFormatPrice(perf.latestClose)}，截至${formatEventDateText(perf.latestDate)}）`
+        : " | 至今涨幅: n/a";
+      eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}${perfText}`;
       eventDetailContentEl.textContent = item.content || "-";
     }
 
@@ -4197,7 +4241,18 @@
         const activeCls = item.event_uuid === activeEventUuid ? "active" : "";
         const scopeMark = item.global_event ? "全局 | " : "";
         const preview = eventBadgeText(item);
-        return `<button type="button" class="event-badge ${globalCls} ${activeCls}" data-event-uuid="${escHtml(item.event_uuid)}" title="${escHtml(scopeMark + (item.title || ''))}">${escHtml(scopeMark + preview)}</button>`;
+        const perf = cycleGetEventSincePerf(item);
+        const perfLabel = perf.available ? cycleFormatPct(perf.pct) : "n/a";
+        const perfCls = perf.available ? (perf.pct > 0 ? "rise" : (perf.pct < 0 ? "fall" : "")) : "na";
+        const title = perf.available
+          ? `${scopeMark}${item.title || ""} | 至今涨幅 ${cycleFormatPct(perf.pct)}`
+          : `${scopeMark}${item.title || ""}`;
+        return `
+          <button type="button" class="event-badge ${globalCls} ${activeCls}" data-event-uuid="${escHtml(item.event_uuid)}" title="${escHtml(title)}">
+            <span class="event-badge-label">${escHtml(scopeMark + preview)}</span>
+            <span class="event-badge-ret ${perfCls}">${escHtml(perfLabel)}</span>
+          </button>
+        `;
       }).join("");
       Array.from(eventListEl.querySelectorAll("button[data-event-uuid]")).forEach((btn) => {
         btn.addEventListener("click", () => {
