@@ -538,6 +538,17 @@
       gap: 8px;
       margin-bottom: 6px;
     }
+    .cycle-events-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .cycle-events-sync-status {
+      color: #64748b;
+      font-size: 12px;
+      white-space: nowrap;
+    }
     .cycle-events-title {
       color: #334155;
       font-size: 12px;
@@ -1486,7 +1497,11 @@
             <div class="cycle-events">
               <div class="cycle-events-header">
                 <div class="cycle-events-title">事件记录（未点击展示摘要，点击查看详情）</div>
-                <button id="eventCreateBtn" class="secondary" type="button">为当日新建事件</button>
+                <div class="cycle-events-actions">
+                  <span id="stockSyncStatus" class="cycle-events-sync-status">未同步</span>
+                  <button id="stockSyncBtn" class="secondary" type="button">同步最新数据</button>
+                  <button id="eventCreateBtn" class="secondary" type="button">为当日新建事件</button>
+                </div>
               </div>
               <div id="eventList" class="event-list"></div>
               <div id="eventDetail" class="event-detail hidden">
@@ -1727,6 +1742,8 @@
     const cycleSubLgNetBtn = document.getElementById("cycleSubLgNet");
     const cycleSubMdNetBtn = document.getElementById("cycleSubMdNet");
     const cycleSubSmNetBtn = document.getElementById("cycleSubSmNet");
+    const stockSyncBtn = document.getElementById("stockSyncBtn");
+    const stockSyncStatusEl = document.getElementById("stockSyncStatus");
     const eventCreateBtn = document.getElementById("eventCreateBtn");
     const eventListEl = document.getElementById("eventList");
     const eventDetailEl = document.getElementById("eventDetail");
@@ -1807,10 +1824,13 @@
     let currentAssetType = "E";
     let eventItems = [];
     let activeEventUuid = "";
+    let stockSyncPolling = false;
     let eventPickedAssets = [];
     let eventSuggestTimer = null;
     let suggestTimer = null;
     let activeSuggestBox = null;
+
+    if (stockSyncBtn) stockSyncBtn.disabled = true;
 
     function setSingleStatus(text, cls) {
       singleStatusEl.className = cls || "muted";
@@ -1887,6 +1907,12 @@
       adminResetStatusEl.textContent = text;
     }
 
+    function setStockSyncStatus(text, cls) {
+      if (!stockSyncStatusEl) return;
+      stockSyncStatusEl.className = `cycle-events-sync-status ${cls || "muted"}`;
+      stockSyncStatusEl.textContent = text;
+    }
+
     function applyAuthUser(user) {
       currentAuthUser = user || null;
       authUserNameEl.textContent = user?.username || "-";
@@ -1959,6 +1985,7 @@
       currentAssetType = "E";
       hoverTradeDate = "";
       lockedTradeDate = "";
+      stockSyncPolling = false;
       eventItems = [];
       activeEventUuid = "";
       reportEmptyEl.textContent = message || "请先在左侧执行分析任务";
@@ -1974,6 +2001,8 @@
       renderEventList([]);
       cycleTableBody.innerHTML = '<tr><td colspan="5" class="muted">暂无周期数据</td></tr>';
       cycleUpdateEventTargetBar();
+      setStockSyncStatus("未同步", "muted");
+      if (stockSyncBtn) stockSyncBtn.disabled = true;
       updatePreviewMode("暂无数据");
       reportRenderMode = "none";
       showJsonPanel();
@@ -2883,6 +2912,7 @@
       currentReportData = reportData;
       currentTsCode = String(reportData?.ts_code || "");
       currentAssetType = String(reportData?.asset_type || "E").toUpperCase();
+      stockSyncPolling = false;
       hoverTradeDate = "";
       lockedTradeDate = "";
       reportRenderMode = "json";
@@ -2897,6 +2927,10 @@
       renderCyclePanelSummary(reportData?.summary || null);
       renderCycleRows(reportData?.cycles || []);
       cycleScheduleDraw();
+      if (stockSyncBtn) {
+        stockSyncBtn.disabled = !currentTsCode || !["E", "H"].includes(currentAssetType);
+      }
+      setStockSyncStatus("可同步", "muted");
       const summary = reportData?.summary || {};
       reportMetaEl.textContent = `${sourceText || "JSON渲染"} | ${summary.stock_name || "-"} (${summary.ts_code || "-"}) | threshold=${summary.threshold || "-"} | min_gap=${summary.min_gap || "-"}`;
       updatePreviewMode("JSON图表渲染（HTML可导出）");
@@ -4616,6 +4650,84 @@
       }
     }
 
+    function buildCurrentReportRefreshOptions() {
+      const summary = currentReportData?.summary || {};
+      const fallbackThreshold = Number.isFinite(Number(summary.threshold)) ? Number(summary.threshold) : toNum("threshold");
+      const fallbackMinGap = Number.isFinite(Number(summary.min_gap)) ? Number(summary.min_gap) : toNum("minGap");
+      const fallbackLookback = Number.isFinite(Number(getVal("lookback"))) ? toNum("lookback") : 365;
+      return {
+        threshold: fallbackThreshold,
+        min_gap: fallbackMinGap,
+        lookback_days: fallbackLookback,
+        end_date: null,
+        asset_type: currentAssetType === "H" ? "H" : "E",
+      };
+    }
+
+    async function pollStockSyncTask(pollUrl) {
+      const deadline = Date.now() + 15 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await sleep(1200);
+        const resp = await fetch(pollUrl);
+        const data = await resp.json().catch(() => ({}));
+        if (resp.status === 500) throw new Error(data.error || data.detail || "sync task failed");
+        if (!resp.ok) throw new Error(data.detail || "sync task poll failed");
+        if (data.status === "done") return data;
+        if (data.status === "error") throw new Error(data.error || "sync task failed");
+        const tid = data.task_id || "-";
+        setStockSyncStatus(`同步中（任务 ${tid}）`, "muted");
+      }
+      throw new Error("同步任务超时，请稍后重试");
+    }
+
+    async function triggerStockSyncLatest() {
+      if (!currentTsCode) {
+        window.alert("请先加载个股详情后再执行同步。");
+        return;
+      }
+      if (!["E", "H"].includes(currentAssetType)) {
+        window.alert("当前仅支持A股/港股详情同步。");
+        return;
+      }
+      if (stockSyncPolling) return;
+      stockSyncPolling = true;
+      if (stockSyncBtn) stockSyncBtn.disabled = true;
+      setStockSyncStatus("提交任务中...", "muted");
+      try {
+        const body = {
+          ts_code: currentTsCode,
+          asset_type: currentAssetType,
+          async_mode: true,
+        };
+        const resp = await fetch("/api/stock-sync/by-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "submit sync task failed");
+        const pollUrl = data.poll_url || `/api/stock-sync/tasks/${data.task_id}`;
+        const done = await pollStockSyncTask(pollUrl);
+        const result = done.result || {};
+        const fetched = Number(result.rows_fetched || 0);
+        const written = Number(result.rows_written || 0);
+        const afterDate = String(result.after_last_trade_date || "-");
+        setStockSyncStatus(`已完成：fetched=${fetched}, written=${written}, 最新=${afterDate}`, "ok");
+        if (written > 0) {
+          setStockSyncStatus(`已完成，刷新报告中...`, "muted");
+          await runReportByCode(currentTsCode, buildCurrentReportRefreshOptions());
+          setStockSyncStatus(`已完成：fetched=${fetched}, written=${written}, 最新=${afterDate}`, "ok");
+        }
+      } catch (e) {
+        setStockSyncStatus(`同步失败：${String(e.message || e)}`, "error");
+      } finally {
+        stockSyncPolling = false;
+        if (stockSyncBtn) {
+          stockSyncBtn.disabled = !currentTsCode || !["E", "H"].includes(currentAssetType);
+        }
+      }
+    }
+
     function getUptrendParams() {
       return {
         threshold: toNum("upThreshold"),
@@ -5710,6 +5822,9 @@
         }
         openEventModal();
       });
+    }
+    if (stockSyncBtn) {
+      stockSyncBtn.addEventListener("click", triggerStockSyncLatest);
     }
     if (cycleClearLockBtn) {
       cycleClearLockBtn.addEventListener("click", () => {

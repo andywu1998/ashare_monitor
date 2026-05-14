@@ -34,6 +34,16 @@ if str(BASE_DIR) not in sys.path:
 from ashare_monitor.cycle import find_uptrend_stocks
 from ashare_monitor.cycle.fund_screener import find_uptrend_funds
 from ashare_monitor.cycle import zigzag_pivots
+from ashare_monitor.stock_sync.db import upsert_stock_daily
+from ashare_monitor.stock_sync.fetch_recent_days import init_pro as init_stock_sync_pro
+from ashare_monitor.stock_sync.fetch_recent_days import fetch_daily_rows as fetch_a_daily_rows_recent
+from ashare_monitor.stock_sync.fetch_all_hk_concurrent import (
+    PROVIDER_AKSHARE_EM,
+    PROVIDER_AKSHARE_SINA,
+    PROVIDER_TUSHARE,
+    PROVIDER_YFINANCE,
+    PROVIDER_FETCHERS as HK_PROVIDER_FETCHERS,
+)
 from services.cycle_web.report_renderer import (
     DEFAULT_TEMPLATE_VERSION,
     build_cycle_payload,
@@ -55,6 +65,7 @@ UPTREND_TASK_WORKERS = max(1, int(os.getenv("UPTREND_TASK_WORKERS", "2")))
 BREADTH_TASK_WORKERS = max(1, int(os.getenv("BREADTH_TASK_WORKERS", "2")))
 REPORT_TASK_WORKERS = max(1, int(os.getenv("REPORT_TASK_WORKERS", "2")))
 RESEARCH_TASK_WORKERS = max(1, int(os.getenv("RESEARCH_TASK_WORKERS", "2")))
+STOCK_SYNC_TASK_WORKERS = max(1, int(os.getenv("STOCK_SYNC_TASK_WORKERS", "2")))
 BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS = max(
     30, int(os.getenv("BREADTH_DEFAULT_LOOKBACK_TRADE_DAYS", "180"))
 )
@@ -82,6 +93,9 @@ REPORT_TABLE_READY: set[tuple[str, int, str, str]] = set()
 RESEARCH_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=RESEARCH_TASK_WORKERS)
 RESEARCH_TABLE_LOCK = Lock()
 RESEARCH_TABLE_READY: set[tuple[str, int, str, str]] = set()
+STOCK_SYNC_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=STOCK_SYNC_TASK_WORKERS)
+STOCK_SYNC_TABLE_LOCK = Lock()
+STOCK_SYNC_TABLE_READY: set[tuple[str, int, str, str]] = set()
 CYCLE_EVENT_TABLE_LOCK = Lock()
 CYCLE_EVENT_TABLE_READY: set[tuple[str, int, str, str]] = set()
 AUTH_TABLE_LOCK = Lock()
@@ -308,6 +322,262 @@ def _fetch_report_task(task_id: str, mysql_cfg: dict) -> Optional[dict]:
             cursor.execute(sql, (task_id,))
             row = cursor.fetchone()
     return _jsonify_row(row) if row else None
+
+
+def _insert_stock_sync_task(
+    *,
+    task_id: str,
+    asset_type: str,
+    ts_code: str,
+    mysql_cfg: dict,
+) -> None:
+    _ensure_stock_sync_task_tables(mysql_cfg)
+    sql = """
+    INSERT INTO stock_sync_task (task_id, status, asset_type, ts_code)
+    VALUES (%s, 'queued', %s, %s)
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id, asset_type, ts_code))
+        conn.commit()
+
+
+def _mark_stock_sync_task_running(task_id: str, mysql_cfg: dict) -> None:
+    _ensure_stock_sync_task_tables(mysql_cfg)
+    sql = """
+    UPDATE stock_sync_task
+    SET status='running', started_at=NOW(3), updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+        conn.commit()
+
+
+def _mark_stock_sync_task_done(task_id: str, result: dict, duration_ms: int, mysql_cfg: dict) -> None:
+    _ensure_stock_sync_task_tables(mysql_cfg)
+    sql = """
+    UPDATE stock_sync_task
+    SET status='done',
+        stock_name=%s,
+        start_date=%s,
+        end_date=%s,
+        before_last_trade_date=%s,
+        after_last_trade_date=%s,
+        provider=%s,
+        rows_fetched=%s,
+        rows_written=%s,
+        error_message=NULL,
+        duration_ms=%s,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                sql,
+                (
+                    result.get("stock_name"),
+                    result.get("start_date"),
+                    result.get("end_date"),
+                    result.get("before_last_trade_date"),
+                    result.get("after_last_trade_date"),
+                    result.get("provider"),
+                    int(result.get("rows_fetched") or 0),
+                    int(result.get("rows_written") or 0),
+                    max(0, int(duration_ms)),
+                    task_id,
+                ),
+            )
+        conn.commit()
+
+
+def _mark_stock_sync_task_error(task_id: str, error_message: str, duration_ms: int, mysql_cfg: dict) -> None:
+    _ensure_stock_sync_task_tables(mysql_cfg)
+    sql = """
+    UPDATE stock_sync_task
+    SET status='error',
+        error_message=%s,
+        duration_ms=%s,
+        finished_at=NOW(3),
+        updated_at=NOW(3)
+    WHERE task_id=%s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, ((error_message or "")[:4096], max(0, int(duration_ms)), task_id))
+        conn.commit()
+
+
+def _fetch_stock_sync_task(task_id: str, mysql_cfg: dict) -> Optional[dict]:
+    _ensure_stock_sync_task_tables(mysql_cfg)
+    sql = """
+    SELECT
+      task_id, status, asset_type, ts_code, stock_name, start_date, end_date,
+      before_last_trade_date, after_last_trade_date, provider, rows_fetched, rows_written,
+      error_message, created_at, started_at, finished_at, duration_ms
+    FROM stock_sync_task
+    WHERE task_id=%s
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (task_id,))
+            row = cursor.fetchone()
+    return _jsonify_row(row) if row else None
+
+
+def _fetch_asset_sync_context(ts_code: str, asset_type: str, mysql_cfg: dict) -> dict:
+    safe_type = (asset_type or "E").strip().upper()
+    sql = """
+    SELECT
+      b.ts_code,
+      b.name,
+      b.list_date,
+      MAX(d.trade_date) AS last_trade_date
+    FROM stock_basic b
+    LEFT JOIN stock_daily d
+      ON d.ts_code = b.ts_code
+     AND d.asset_type = b.asset_type
+    WHERE b.ts_code = %s
+      AND b.asset_type = %s
+      AND b.list_status = 'L'
+    GROUP BY b.ts_code, b.name, b.list_date
+    LIMIT 1
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (ts_code, safe_type))
+            row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"asset not found by ts_code: {ts_code}")
+    return dict(row)
+
+
+def _latest_trade_date_for_code(ts_code: str, asset_type: str, mysql_cfg: dict) -> Optional[date]:
+    sql = """
+    SELECT MAX(trade_date) AS max_trade_date
+    FROM stock_daily
+    WHERE ts_code = %s
+      AND asset_type = %s
+    """
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, (ts_code, asset_type))
+            row = cursor.fetchone() or {}
+    v = row.get("max_trade_date")
+    if isinstance(v, datetime):
+        return v.date()
+    return v
+
+
+def _sync_one_stock_latest(ts_code: str, asset_type: str, mysql_cfg: dict) -> dict:
+    safe_code = (ts_code or "").strip().upper()
+    safe_type = (asset_type or "E").strip().upper()
+    if safe_type not in {"E", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/H")
+
+    info = _fetch_asset_sync_context(safe_code, safe_type, mysql_cfg)
+    stock_name = str(info.get("name") or safe_code)
+    list_date = info.get("list_date")
+    before_last = info.get("last_trade_date")
+    if isinstance(before_last, datetime):
+        before_last = before_last.date()
+    if isinstance(list_date, datetime):
+        list_date = list_date.date()
+
+    end_date = date.today()
+    provider = "tushare" if safe_type == "E" else "akshare_sina"
+    rows: list[tuple] = []
+
+    if before_last:
+        start_date = before_last + timedelta(days=1)
+    else:
+        base_start = list_date if isinstance(list_date, date) else None
+        rolling_start = end_date - timedelta(days=120)
+        if base_start:
+            start_date = max(base_start, rolling_start)
+        else:
+            start_date = rolling_start
+
+    if start_date <= end_date:
+        if safe_type == "E":
+            pro = init_stock_sync_pro()
+            rows = fetch_a_daily_rows_recent(pro, safe_code, start_date, end_date)
+        else:
+            providers = [PROVIDER_AKSHARE_SINA, PROVIDER_AKSHARE_EM, PROVIDER_TUSHARE, PROVIDER_YFINANCE]
+            errors: list[str] = []
+            provider_ok = False
+            for p in providers:
+                fetcher = HK_PROVIDER_FETCHERS.get(p)
+                if fetcher is None:
+                    continue
+                try:
+                    rows = fetcher(ts_code=safe_code, start_date=start_date, end_date=end_date)
+                    provider = p
+                    provider_ok = True
+                    break
+                except Exception as exc:
+                    errors.append(f"{p}:{exc}")
+                    continue
+            if not provider_ok:
+                # keep best-effort fallback with empty rows; only raise when all providers errored.
+                raise RuntimeError("; ".join(errors)[:1500])
+
+    written = upsert_stock_daily(rows) if rows else 0
+    after_last = _latest_trade_date_for_code(safe_code, safe_type, mysql_cfg)
+    return {
+        "asset_type": safe_type,
+        "ts_code": safe_code,
+        "stock_name": stock_name,
+        "provider": provider,
+        "start_date": start_date,
+        "end_date": end_date,
+        "before_last_trade_date": before_last,
+        "after_last_trade_date": after_last,
+        "rows_fetched": len(rows),
+        "rows_written": int(written or 0),
+    }
+
+
+def _run_stock_sync_task(task_id: str, *, ts_code: str, asset_type: str, mysql_cfg: dict) -> None:
+    started = time.time()
+    _mark_stock_sync_task_running(task_id, mysql_cfg)
+    try:
+        result = _sync_one_stock_latest(ts_code=ts_code, asset_type=asset_type, mysql_cfg=mysql_cfg)
+        _mark_stock_sync_task_done(
+            task_id=task_id,
+            result=result,
+            duration_ms=int((time.time() - started) * 1000),
+            mysql_cfg=mysql_cfg,
+        )
+    except Exception as exc:
+        _mark_stock_sync_task_error(
+            task_id=task_id,
+            error_message=str(exc),
+            duration_ms=int((time.time() - started) * 1000),
+            mysql_cfg=mysql_cfg,
+        )
+
+
+def _submit_stock_sync_task(*, ts_code: str, asset_type: str, mysql_cfg: dict) -> str:
+    safe_code = (ts_code or "").strip().upper()
+    safe_type = (asset_type or "E").strip().upper()
+    if safe_type not in {"E", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/H")
+
+    task_id = uuid.uuid4().hex[:16]
+    _insert_stock_sync_task(task_id=task_id, asset_type=safe_type, ts_code=safe_code, mysql_cfg=mysql_cfg)
+    STOCK_SYNC_TASK_EXECUTOR.submit(
+        _run_stock_sync_task,
+        task_id,
+        ts_code=safe_code,
+        asset_type=safe_type,
+        mysql_cfg=mysql_cfg,
+    )
+    return task_id
 
 
 def _resolve_mysql_cfg(
@@ -727,6 +997,53 @@ def _ensure_report_task_tables(mysql_cfg: dict) -> None:
 
     with REPORT_TABLE_LOCK:
         REPORT_TABLE_READY.add(key)
+
+
+def _ensure_stock_sync_task_tables(mysql_cfg: dict) -> None:
+    key = (
+        str(mysql_cfg["host"]),
+        int(mysql_cfg.get("port", DEFAULT_MYSQL_PORT)),
+        str(mysql_cfg["user"]),
+        str(mysql_cfg["database"]),
+    )
+    with STOCK_SYNC_TABLE_LOCK:
+        if key in STOCK_SYNC_TABLE_READY:
+            return
+
+    task_sql = """
+    CREATE TABLE IF NOT EXISTS stock_sync_task (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      task_id VARCHAR(32) NOT NULL,
+      status VARCHAR(16) NOT NULL,
+      asset_type CHAR(1) NOT NULL DEFAULT 'E',
+      ts_code VARCHAR(16) NOT NULL,
+      stock_name VARCHAR(128) NULL,
+      start_date DATE NULL,
+      end_date DATE NULL,
+      before_last_trade_date DATE NULL,
+      after_last_trade_date DATE NULL,
+      provider VARCHAR(32) NULL,
+      rows_fetched INT NULL,
+      rows_written INT NULL,
+      error_message TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      started_at DATETIME(3) NULL,
+      finished_at DATETIME(3) NULL,
+      duration_ms INT NULL,
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      UNIQUE KEY uk_task_id (task_id),
+      KEY idx_status_created (status, created_at),
+      KEY idx_asset_ts_created (asset_type, ts_code, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+
+    with _mysql_connect(mysql_cfg) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(task_sql)
+        conn.commit()
+
+    with STOCK_SYNC_TABLE_LOCK:
+        STOCK_SYNC_TABLE_READY.add(key)
 
 
 def _ensure_cycle_event_tables(mysql_cfg: dict) -> None:
@@ -3248,6 +3565,19 @@ class GenerateByCodeRequest(BaseModel):
     async_mode: bool = Field(True, description="run in async task mode")
 
 
+class StockSyncByCodeRequest(BaseModel):
+    ts_code: str = Field(..., description="Stock ts_code, e.g. 300308.SZ or 02533.HK")
+    asset_type: str = Field("E", description="E=stock, H=hk stock")
+    mysql_host: str = DEFAULT_MYSQL_HOST
+    mysql_port: int = DEFAULT_MYSQL_PORT
+    mysql_user: str = DEFAULT_MYSQL_USER
+    mysql_database: str = DEFAULT_MYSQL_DB
+    mysql_password: Optional[str] = Field(
+        None, description="If omitted, uses MYSQL_PASSWORD env var"
+    )
+    async_mode: bool = Field(True, description="run in async task mode")
+
+
 class UptrendQuery(BaseModel):
     threshold: float = Field(0.08, ge=0.005, le=0.8)
     min_gap: int = Field(5, ge=1, le=60)
@@ -5075,6 +5405,89 @@ def get_report_task(
         **meta,
         "report_id": report_id,
         "cache_hit": bool(row.get("cache_hit")),
+    }
+
+
+@app.post("/api/stock-sync/by-code")
+def stock_sync_by_code(req: StockSyncByCodeRequest):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=req.mysql_host,
+        mysql_port=req.mysql_port,
+        mysql_user=req.mysql_user,
+        mysql_database=req.mysql_database,
+        mysql_password=req.mysql_password,
+    )
+    safe_code = (req.ts_code or "").strip().upper()
+    safe_type = (req.asset_type or "E").strip().upper()
+    if safe_type not in {"E", "H"}:
+        raise HTTPException(status_code=400, detail="asset_type must be E/H")
+    if req.async_mode:
+        task_id = _submit_stock_sync_task(ts_code=safe_code, asset_type=safe_type, mysql_cfg=mysql_cfg)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "task_id": task_id,
+                "status": "queued",
+                "asset_type": safe_type,
+                "ts_code": safe_code,
+                "poll_url": f"/api/stock-sync/tasks/{task_id}",
+            },
+        )
+    payload = _sync_one_stock_latest(ts_code=safe_code, asset_type=safe_type, mysql_cfg=mysql_cfg)
+    return {"async_mode": False, "status": "done", **payload}
+
+
+@app.get("/api/stock-sync/tasks/{task_id}")
+def get_stock_sync_task(
+    task_id: str,
+    mysql_host: str = DEFAULT_MYSQL_HOST,
+    mysql_port: int = DEFAULT_MYSQL_PORT,
+    mysql_user: str = DEFAULT_MYSQL_USER,
+    mysql_database: str = DEFAULT_MYSQL_DB,
+    mysql_password: Optional[str] = None,
+):
+    mysql_cfg = _resolve_mysql_cfg(
+        mysql_host=mysql_host,
+        mysql_port=mysql_port,
+        mysql_user=mysql_user,
+        mysql_database=mysql_database,
+        mysql_password=mysql_password,
+    )
+    row = _fetch_stock_sync_task(task_id, mysql_cfg)
+    if not row:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    status = str(row.get("status") or "")
+    base = {
+        "task_id": row.get("task_id"),
+        "status": status,
+        "asset_type": row.get("asset_type") or "E",
+        "ts_code": row.get("ts_code"),
+        "stock_name": row.get("stock_name"),
+        "created_at": row.get("created_at"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "duration_ms": row.get("duration_ms"),
+        "poll_url": f"/api/stock-sync/tasks/{task_id}",
+    }
+    if status in {"queued", "running"}:
+        return base
+    if status == "error":
+        return JSONResponse(
+            status_code=500,
+            content={**base, "error": row.get("error_message") or "task failed"},
+        )
+    return {
+        **base,
+        "result": {
+            "start_date": row.get("start_date"),
+            "end_date": row.get("end_date"),
+            "before_last_trade_date": row.get("before_last_trade_date"),
+            "after_last_trade_date": row.get("after_last_trade_date"),
+            "provider": row.get("provider"),
+            "rows_fetched": int(row.get("rows_fetched") or 0),
+            "rows_written": int(row.get("rows_written") or 0),
+        },
     }
 
 
