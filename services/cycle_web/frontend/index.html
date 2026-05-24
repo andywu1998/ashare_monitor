@@ -2868,8 +2868,12 @@
       cycleInertiaRaf = requestAnimationFrame(step);
     }
 
+    function cycleGetFullscreenTarget() {
+      return reportPanel || cycleChartPanel;
+    }
+
     function cycleIsFullscreenActive() {
-      return document.fullscreenElement === cycleChartPanel;
+      return document.fullscreenElement === cycleGetFullscreenTarget();
     }
 
     function cycleUpdateFullscreenBtn() {
@@ -2890,9 +2894,10 @@
     }
 
     async function cycleEnterFullscreen() {
-      if (!cycleChartPanel || !cycleChartPanel.requestFullscreen) return;
+      const target = cycleGetFullscreenTarget();
+      if (!target || !target.requestFullscreen) return;
       try {
-        await cycleChartPanel.requestFullscreen();
+        await target.requestFullscreen();
         await cycleLockLandscape();
       } catch (_) {}
       cycleUpdateFullscreenBtn();
