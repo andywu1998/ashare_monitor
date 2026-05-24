@@ -2896,7 +2896,12 @@
         await cycleLockLandscape();
       } catch (_) {}
       cycleUpdateFullscreenBtn();
+      cycleResizeLightweightCharts();
       cycleScheduleDraw();
+      setTimeout(() => {
+        cycleResizeLightweightCharts();
+        cycleScheduleDraw();
+      }, 60);
     }
 
     async function cycleExitFullscreen() {
@@ -2905,7 +2910,12 @@
       }
       cycleUnlockOrientation();
       cycleUpdateFullscreenBtn();
+      cycleResizeLightweightCharts();
       cycleScheduleDraw();
+      setTimeout(() => {
+        cycleResizeLightweightCharts();
+        cycleScheduleDraw();
+      }, 60);
     }
 
     function renderCycleReportData(reportData, sourceText) {
@@ -3218,7 +3228,12 @@
       document.addEventListener("fullscreenchange", () => {
         cycleUpdateFullscreenBtn();
         if (!cycleIsFullscreenActive()) cycleUnlockOrientation();
+        cycleResizeLightweightCharts();
         redraw();
+        setTimeout(() => {
+          cycleResizeLightweightCharts();
+          redraw();
+        }, 60);
       });
       cycleUpdateFullscreenBtn();
     }
@@ -3414,6 +3429,20 @@
       });
 
       return true;
+    }
+
+    function cycleResizeLightweightCharts() {
+      if (!lwMainChart || !lwSubChart || !cycleMainCanvas || !cycleSubCanvas) return;
+      const mainW = Math.max(280, cycleMainCanvas.clientWidth || 280);
+      const mainH = Math.max(220, cycleMainCanvas.clientHeight || 220);
+      const subW = Math.max(280, cycleSubCanvas.clientWidth || 280);
+      const subH = Math.max(100, cycleSubCanvas.clientHeight || 100);
+      try {
+        lwMainChart.resize(mainW, mainH);
+        lwSubChart.resize(subW, subH);
+      } catch (_) {
+        // no-op
+      }
     }
 
     function cycleRenderStructureOverlay(reportData) {
@@ -5967,7 +5996,14 @@
       const isJsonFs = document.fullscreenElement === reportPanel;
       if (!isHtmlFs && !isJsonFs) fsBtn.textContent = "全屏预览";
       if (isHtmlFs || reportRenderMode === "html") adjustIframeHeight();
-      if (isJsonFs || reportRenderMode === "json") drawCycleCanvas(currentReportData || {});
+      if (isJsonFs || reportRenderMode === "json") {
+        cycleResizeLightweightCharts();
+        drawCycleCanvas(currentReportData || {});
+        setTimeout(() => {
+          cycleResizeLightweightCharts();
+          drawCycleCanvas(currentReportData || {});
+        }, 60);
+      }
     });
 
     viewer.addEventListener("load", () => {
