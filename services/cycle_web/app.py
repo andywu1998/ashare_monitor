@@ -161,6 +161,17 @@ def _jsonify_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: _jsonify_value(v) for k, v in row.items()}
 
 
+def _maybe_parse_json(value: Any) -> Any:
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw and raw[0] in "[{":
+            try:
+                return json.loads(raw)
+            except Exception:
+                return value
+    return value
+
+
 def _report_cache_key(
     *,
     mysql_cfg: dict,
@@ -1067,12 +1078,17 @@ def _ensure_cycle_event_tables(mysql_cfg: dict) -> None:
       is_global TINYINT(1) NOT NULL DEFAULT 0,
       tags VARCHAR(255) NULL,
       source VARCHAR(32) NOT NULL DEFAULT 'manual',
+      event_type VARCHAR(32) NULL,
+      payload_json JSON NULL,
+      dedupe_key VARCHAR(128) NULL,
       created_by VARCHAR(64) NULL,
       created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
       UNIQUE KEY uk_event_uuid (event_uuid),
+      UNIQUE KEY uk_dedupe_key (dedupe_key),
       KEY idx_trade_date (trade_date),
-      KEY idx_global_trade_date (is_global, trade_date)
+      KEY idx_global_trade_date (is_global, trade_date),
+      KEY idx_event_type_trade_date (event_type, trade_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """
 
@@ -1093,6 +1109,23 @@ def _ensure_cycle_event_tables(mysql_cfg: dict) -> None:
         with conn.cursor() as cursor:
             cursor.execute(event_sql)
             cursor.execute(map_sql)
+
+            # Backward-compatible migration for existing installations.
+            cursor.execute("SHOW COLUMNS FROM cycle_event")
+            cols = {str((r or {}).get("Field") or "") for r in (cursor.fetchall() or [])}
+            if "event_type" not in cols:
+                cursor.execute("ALTER TABLE cycle_event ADD COLUMN event_type VARCHAR(32) NULL AFTER source")
+            if "payload_json" not in cols:
+                cursor.execute("ALTER TABLE cycle_event ADD COLUMN payload_json JSON NULL AFTER event_type")
+            if "dedupe_key" not in cols:
+                cursor.execute("ALTER TABLE cycle_event ADD COLUMN dedupe_key VARCHAR(128) NULL AFTER payload_json")
+
+            cursor.execute("SHOW INDEX FROM cycle_event")
+            idx = {str((r or {}).get('Key_name') or "") for r in (cursor.fetchall() or [])}
+            if "uk_dedupe_key" not in idx:
+                cursor.execute("ALTER TABLE cycle_event ADD UNIQUE KEY uk_dedupe_key (dedupe_key)")
+            if "idx_event_type_trade_date" not in idx:
+                cursor.execute("ALTER TABLE cycle_event ADD KEY idx_event_type_trade_date (event_type, trade_date)")
         conn.commit()
 
     with CYCLE_EVENT_TABLE_LOCK:
@@ -1154,6 +1187,9 @@ def _create_cycle_event(
     is_global: bool,
     tags: Optional[str],
     source: str,
+    event_type: Optional[str],
+    payload_json: Optional[dict],
+    dedupe_key: Optional[str],
     created_by: str,
     mysql_cfg: dict,
 ) -> dict:
@@ -1168,6 +1204,8 @@ def _create_cycle_event(
     safe_codes = _normalize_event_ts_codes(ts_codes)
     safe_source = (source or "manual").strip()[:32] or "manual"
     safe_tags = (tags or "").strip()[:255] or None
+    safe_event_type = (event_type or "").strip()[:32] or None
+    safe_dedupe_key = (dedupe_key or "").strip()[:128] or None
     safe_creator = (created_by or "").strip()[:64] or None
     if (not is_global) and (not safe_codes):
         raise HTTPException(status_code=400, detail="ts_codes required when global_event=false")
@@ -1176,12 +1214,34 @@ def _create_cycle_event(
     unknown = [c for c in safe_codes if c not in asset_type_map]
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown ts_code(s): {','.join(unknown[:8])}")
+    if safe_dedupe_key:
+        dup_sql = "SELECT event_uuid FROM cycle_event WHERE dedupe_key = %s LIMIT 1"
+        with _mysql_connect(mysql_cfg) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(dup_sql, (safe_dedupe_key,))
+                dup_row = cursor.fetchone() or {}
+        dup_uuid = str(dup_row.get("event_uuid") or "")
+        if dup_uuid:
+            return {
+                "event_uuid": dup_uuid,
+                "trade_date": safe_trade_date,
+                "title": safe_title[:120],
+                "content": safe_content[:4000],
+                "global_event": bool(is_global),
+                "tags": safe_tags,
+                "source": safe_source,
+                "event_type": safe_event_type,
+                "payload_json": payload_json,
+                "dedupe_key": safe_dedupe_key,
+                "ts_codes": safe_codes,
+                "duplicate": True,
+            }
 
     event_uuid = uuid.uuid4().hex
     event_sql = """
     INSERT INTO cycle_event (
-      event_uuid, trade_date, title, content, is_global, tags, source, created_by
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+      event_uuid, trade_date, title, content, is_global, tags, source, event_type, payload_json, dedupe_key, created_by
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     map_sql = """
     INSERT INTO cycle_event_asset (event_uuid, ts_code, asset_type)
@@ -1199,6 +1259,9 @@ def _create_cycle_event(
                     1 if is_global else 0,
                     safe_tags,
                     safe_source,
+                    safe_event_type,
+                    json.dumps(payload_json, ensure_ascii=False) if payload_json is not None else None,
+                    safe_dedupe_key,
                     safe_creator,
                 ),
             )
@@ -1214,6 +1277,9 @@ def _create_cycle_event(
         "global_event": bool(is_global),
         "tags": safe_tags,
         "source": safe_source,
+        "event_type": safe_event_type,
+        "payload_json": payload_json,
+        "dedupe_key": safe_dedupe_key,
         "ts_codes": safe_codes,
     }
 
@@ -1230,7 +1296,7 @@ def _list_cycle_events(
     safe_code = (ts_code or "").strip().upper()
     safe_type = (asset_type or "").strip().upper()[:1]
     sql = """
-    SELECT e.event_uuid, e.trade_date, e.title, e.content, e.is_global, e.tags, e.source, e.created_at,
+    SELECT e.event_uuid, e.trade_date, e.title, e.content, e.is_global, e.tags, e.source, e.event_type, e.payload_json, e.dedupe_key, e.created_at,
            (
              SELECT GROUP_CONCAT(DISTINCT aa.ts_code ORDER BY aa.ts_code SEPARATOR ',')
              FROM cycle_event_asset aa
@@ -1266,6 +1332,9 @@ def _list_cycle_events(
                 "global_event": bool(row.get("is_global")),
                 "tags": row.get("tags"),
                 "source": row.get("source"),
+                "event_type": row.get("event_type"),
+                "payload_json": _maybe_parse_json(_jsonify_value(row.get("payload_json"))),
+                "dedupe_key": row.get("dedupe_key"),
                 "ts_codes": codes,
                 "asset_type": safe_type or None,
                 "created_at": _jsonify_value(row.get("created_at")),
@@ -3595,6 +3664,9 @@ class EventCreateRequest(BaseModel):
     global_event: bool = Field(False, description="True means visible to all assets")
     tags: Optional[str] = Field(None, max_length=255)
     source: str = Field("manual", max_length=32)
+    event_type: Optional[str] = Field(None, max_length=32)
+    payload_json: Optional[dict] = None
+    dedupe_key: Optional[str] = Field(None, max_length=128)
 
 
 class AuthLoginRequest(BaseModel):
@@ -4358,6 +4430,9 @@ def create_cycle_event(
             is_global=bool(req.global_event),
             tags=req.tags,
             source=req.source,
+            event_type=req.event_type,
+            payload_json=req.payload_json,
+            dedupe_key=req.dedupe_key,
             created_by=creator,
             mysql_cfg=mysql_cfg,
         )

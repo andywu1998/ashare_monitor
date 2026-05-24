@@ -4206,6 +4206,36 @@
       };
     }
 
+    function eventPayloadBuyback(item) {
+      const payload = item && typeof item.payload_json === "object" ? item.payload_json : null;
+      const buyback = payload && typeof payload.buyback === "object" ? payload.buyback : null;
+      if (!buyback) return null;
+      return {
+        currency: String(buyback.currency || "HKD"),
+        totalAmount: Number(buyback.total_amount || 0),
+        totalShares: Number(buyback.total_shares || 0),
+        avgPrice: Number(buyback.avg_price || 0),
+        highPrice: buyback.high_price === null || buyback.high_price === undefined || buyback.high_price === "" ? null : Number(buyback.high_price),
+        lowPrice: buyback.low_price === null || buyback.low_price === undefined || buyback.low_price === "" ? null : Number(buyback.low_price),
+      };
+    }
+
+    function eventStructuredSummary(item) {
+      const buyback = eventPayloadBuyback(item);
+      if (buyback) {
+        const highText = buyback.highPrice === null || Number.isNaN(buyback.highPrice) ? "n/a" : cycleFormatPrice(buyback.highPrice);
+        const lowText = buyback.lowPrice === null || Number.isNaN(buyback.lowPrice) ? "n/a" : cycleFormatPrice(buyback.lowPrice);
+        return [
+          `回购总额: ${buyback.currency} ${cycleFormatPrice(buyback.totalAmount)}`,
+          `总股数: ${Number.isFinite(buyback.totalShares) ? buyback.totalShares.toLocaleString("zh-CN") : "n/a"}`,
+          `总均价: ${cycleFormatPrice(buyback.avgPrice)}`,
+          `最高价: ${highText}`,
+          `最低价: ${lowText}`,
+        ].join(" | ");
+      }
+      return "";
+    }
+
     function renderEventDetail(item) {
       if (!eventDetailEl || !eventDetailTitleEl || !eventDetailMetaEl || !eventDetailContentEl) return;
       if (!item) {
@@ -4224,11 +4254,12 @@
       }
       const scopeText = item.global_event ? "全局事件" : `关联 ${Array.isArray(item.ts_codes) ? item.ts_codes.length : 0} 只股票`;
       const tagsText = item.tags ? ` | 标签: ${item.tags}` : "";
+      const structText = eventStructuredSummary(item);
       const perf = cycleGetEventSincePerf(item);
       const perfText = perf.available
         ? ` | 至今涨幅: ${cycleFormatPct(perf.pct)}（${cycleFormatPrice(perf.eventClose)}→${cycleFormatPrice(perf.latestClose)}，截至${formatEventDateText(perf.latestDate)}）`
         : " | 至今涨幅: n/a";
-      eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}${perfText}`;
+      eventDetailMetaEl.textContent = `${formatEventDateText(item.trade_date)} | ${scopeText}${tagsText}${structText ? ` | ${structText}` : ""}${perfText}`;
       eventDetailContentEl.textContent = item.content || "-";
     }
 
@@ -4275,12 +4306,13 @@
         const activeCls = item.event_uuid === activeEventUuid ? "active" : "";
         const scopeMark = item.global_event ? "全局 | " : "";
         const preview = eventBadgeText(item);
+        const structPreview = eventStructuredSummary(item);
         const perf = cycleGetEventSincePerf(item);
         const perfLabel = perf.available ? cycleFormatPct(perf.pct) : "n/a";
         const perfCls = perf.available ? (perf.pct > 0 ? "rise" : (perf.pct < 0 ? "fall" : "")) : "na";
         const title = perf.available
-          ? `${scopeMark}${item.title || ""} | 至今涨幅 ${cycleFormatPct(perf.pct)}`
-          : `${scopeMark}${item.title || ""}`;
+          ? `${scopeMark}${item.title || ""}${structPreview ? ` | ${structPreview}` : ""} | 至今涨幅 ${cycleFormatPct(perf.pct)}`
+          : `${scopeMark}${item.title || ""}${structPreview ? ` | ${structPreview}` : ""}`;
         return `
           <button type="button" class="event-badge ${globalCls} ${activeCls}" data-event-uuid="${escHtml(item.event_uuid)}" title="${escHtml(title)}">
             <span class="event-badge-label">${escHtml(scopeMark + preview)}</span>
@@ -4361,6 +4393,32 @@
         eventModalStatusEl.textContent = "保存中...";
       }
       try {
+        const payloadJson = (() => {
+          const rawTitle = String(title || "");
+          const rawContent = String(content || "");
+          const isBuyback = /回购|购回/.test(rawTitle) && /回购|购回/.test(rawContent);
+          if (!isBuyback) return null;
+          return {
+            schema: "buyback.v1",
+            ts_code: currentTsCode,
+            asset_type: currentAssetType,
+            company: currentReportData?.summary?.stock_name || "",
+            trade_date: tradeDate,
+            buyback: {
+              currency: "HKD",
+              total_amount: null,
+              total_shares: null,
+              avg_price: null,
+              high_price: null,
+              low_price: null,
+            },
+            source: {
+              provider: "ui",
+              announcement_id: "",
+              url: "",
+            },
+          };
+        })();
         const payload = {
           trade_date: tradeDate,
           title,
@@ -4369,6 +4427,9 @@
           global_event: globalEvent,
           ts_codes: globalEvent ? tsCodes : Array.from(new Set(tsCodes)),
           source: "ui",
+          event_type: payloadJson ? "buyback" : null,
+          payload_json: payloadJson,
+          dedupe_key: payloadJson ? `ui_buyback:${currentTsCode}:${tradeDate}:${title}` : null,
         };
         const resp = await fetch("/api/cycle-events", {
           method: "POST",
