@@ -1,6 +1,7 @@
 # Virtual environments
 .venv/
 .venv_web/
+.venv_web
 **/.venv/
 
 # Python caches
@@ -24,3 +25,17 @@ configs/stock_sync.env
 
 # Local tool artifacts
 .codex
+
+# Migrated company_analyze local/private artifacts
+.env.*
+MIGRATION_NOTES.md
+.claude/settings.local.json
+**/.claude/settings.local.json
+*.enc
+*.pem
+*.key
+myenv/
+venv/
+record/
+company_analyze/invest_community/run.sh
+company_analyze/scp_to_vm.sh

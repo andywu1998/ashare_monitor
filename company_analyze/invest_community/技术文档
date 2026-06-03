@@ -1,0 +1,220 @@
+技术文档
+本文档包含项目的技术选型分析、开源项目调研及架构设计建议。
+
+一、开源项目调研
+1. K线图组件库
+库名称	许可证	Stars	特点	推荐度
+Lightweight Charts	Apache 2.0	9k+	TradingView官方出品，仅45KB，性能极佳	⭐⭐⭐⭐⭐
+KLineChart	Apache 2.0	3.5k+	零依赖，支持移动端，21种技术指标	⭐⭐⭐⭐⭐
+HQChart	MIT	2k+	功能最全，支持通达信语法，80+指标	⭐⭐⭐⭐
+ECharts	Apache 2.0	60k+	通用图表库，K线支持基础	⭐⭐⭐
+TechanJS	MIT	2k+	基于D3，技术分析专用	⭐⭐⭐
+推荐选择
+首选：Lightweight Charts
+优势：
+● TradingView官方维护，代码质量高
+● 体积小（45KB），加载快
+● 支持多图表叠加、自定义插件
+● TypeScript原生支持
+● 活跃维护，文档完善
+注意：需要在页面添加TradingView归属链接（Apache 2.0许可要求）
+备选：KLineChart
+优势：
+● 零依赖，轻量级
+● 移动端友好
+● 提供Pro版本开箱即用
+● 中文文档友好
+
+2. 行情数据API
+API名称	覆盖市场	免费额度	实时数据	推荐度
+QOS	A股/港股/美股	有限免费	✅ WebSocket	⭐⭐⭐⭐⭐
+iTick	A股/港股/美股/外汇	永久免费基础版	✅	⭐⭐⭐⭐⭐
+AKShare	A股为主	完全免费	❌ 延迟	⭐⭐⭐⭐
+Alpha Vantage	全球	25次/天	❌	⭐⭐⭐⭐
+Finnhub	美股为主	60次/分钟	✅ WebSocket	⭐⭐⭐⭐
+XTick	A股/港股/美股	有限免费	✅	⭐⭐⭐⭐
+通联数据	A股/港股	试用	✅	⭐⭐⭐
+推荐方案
+国内市场（A股/港股）：
+● 主要数据源：QOS 或 iTick（支持WebSocket实时推送）
+● 备用/历史数据：AKShare（Python库，免费无限制）
+美股市场：
+● Finnhub 或 Alpha Vantage
+注意事项：
+● 东方财富接口已限制访问频率，不推荐
+● 商业用途需确认API许可条款
+
+3. 相关开源项目参考
+项目	技术栈	说明
+KLineChart Pro	React/Vue	基于KLineChart的完整金融图表应用
+trading-vue-js	Vue 2	可高度定制的交易图表（已停止维护）
+stock-chart	React	股票图表示例项目
+
+二、技术选型
+前端框架
+方案	优势	劣势	推荐场景
+Next.js (React)	生态成熟，SSR/SSG灵活，Vercel部署便捷	学习曲线略陡	企业级应用，SEO重要
+Nuxt 3 (Vue)	Vue生态，开发体验好，上手快	生态略小于React	Vue团队首选
+Remix (React)	性能优秀，数据加载机制先进	生态相对较新	交互密集型应用
+推荐：Next.js 15+
+理由：
+● React生态最成熟，组件库丰富
+● App Router架构现代化
+● 与Lightweight Charts集成方便
+● Turbopack开发体验优秀
+● 部署选择多（Vercel/自托管）
+
+后端框架
+方案	语言	优势	推荐度
+Next.js API Routes	TypeScript	全栈统一，部署简单	⭐⭐⭐⭐⭐
+NestJS	TypeScript	企业级架构，模块化	⭐⭐⭐⭐⭐
+Hono	TypeScript	轻量极速，Edge友好	⭐⭐⭐⭐
+Express.js	JavaScript	简单灵活，生态丰富	⭐⭐⭐⭐
+FastAPI	Python	性能好，适合数据处理	⭐⭐⭐⭐
+推荐方案
+简单方案：Next.js API Routes
+● 前后端一体，开发部署简单
+● 适合MVP阶段快速迭代
+进阶方案：Next.js (前端) + NestJS (后端)
+● 前后端分离，架构清晰
+● 适合功能复杂、需要长期维护的项目
+
+数据库
+数据库	类型	适用场景	推荐度
+PostgreSQL	关系型	主数据存储，事务处理	⭐⭐⭐⭐⭐
+SQLite	关系型	本地开发，轻量部署	⭐⭐⭐⭐
+Redis	内存KV	缓存，实时数据	⭐⭐⭐⭐⭐
+TimescaleDB	时序	行情数据存储	⭐⭐⭐⭐
+推荐组合
+● 主数据库：PostgreSQL（用户、事件、公司等结构化数据）
+● 行情数据：PostgreSQL + TimescaleDB扩展（或独立TimescaleDB）
+● 缓存层：Redis（热点数据、实时行情缓存）
+
+ORM / 数据库工具
+工具	特点	推荐度
+Prisma	类型安全，迁移管理，现代化	⭐⭐⭐⭐⭐
+Drizzle ORM	轻量，SQL-like，性能好	⭐⭐⭐⭐⭐
+TypeORM	功能全面，装饰器风格	⭐⭐⭐⭐
+推荐：Prisma 或 Drizzle ORM
+
+UI组件库
+库名称	框架	特点	推荐度
+shadcn/ui	React	可定制，无运行时依赖	⭐⭐⭐⭐⭐
+Radix UI	React	无障碍，底层组件	⭐⭐⭐⭐⭐
+Ant Design	React	企业级，组件丰富	⭐⭐⭐⭐
+Tailwind CSS	通用	原子化CSS	⭐⭐⭐⭐⭐
+推荐：shadcn/ui + Tailwind CSS
+
+三、推荐技术栈
+方案A：全栈一体（推荐MVP阶段）
+前端框架：    Next.js 15 (App Router)
+UI组件：      shadcn/ui + Tailwind CSS
+K线图：       Lightweight Charts
+状态管理：    Zustand / Jotai
+数据库：      PostgreSQL (Supabase/Neon)
+ORM：         Prisma
+部署：        Vercel / Railway
+优势：开发快，部署简单，成本低
+
+方案B：前后端分离（推荐生产环境）
+前端：
+  框架：      Next.js 15
+  UI：        shadcn/ui + Tailwind CSS
+  K线图：     Lightweight Charts / KLineChart
+  状态：      Zustand
+
+后端：
+  框架：      NestJS
+  语言：      TypeScript
+  数据库：    PostgreSQL + Redis
+  ORM：       Prisma / TypeORM
+
+数据服务：
+  行情API：   QOS / iTick
+  定时任务：  Bull Queue (Redis)
+
+部署：
+  前端：      Vercel / Cloudflare Pages
+  后端：      Railway / Fly.io / Docker
+  数据库：    Supabase / Neon / 自建
+优势：架构清晰，可扩展性强
+
+四、架构设计
+系统架构图
+┌─────────────────────────────────────────────────────────────┐
+│                        客户端 (Browser)                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Next.js 前端应用                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   日历视图   │  │  K线图展示  │  │     事件管理        │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     API Layer (REST/tRPC)                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+┌─────────────────┐  ┌─────────────┐  ┌─────────────────────┐
+│   PostgreSQL    │  │    Redis    │  │   行情数据 API      │
+│  (主数据存储)    │  │   (缓存)    │  │  (QOS/iTick等)      │
+└─────────────────┘  └─────────────┘  └─────────────────────┘
+数据流设计
+行情数据同步流程：
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ 行情API  │ ──▶ │ 定时任务  │ ──▶ │ 数据处理  │ ──▶ │ PostgreSQL│
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+                                                         │
+                                                         ▼
+                                                  ┌──────────┐
+                                                  │  Redis   │
+                                                  │ (缓存层) │
+                                                  └──────────┘
+
+实时行情推送（可选）：
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│ 行情WS   │ ──▶ │  Server  │ ──▶ │  Client  │
+└──────────┘     └──────────┘     └──────────┘
+
+五、开发计划建议
+阶段一：基础功能
+● 项目初始化（Next.js + Prisma + PostgreSQL）
+● 公司/标的管理 CRUD
+● 事件管理 CRUD
+● 基础日历视图
+阶段二：核心功能
+● K线图组件集成（Lightweight Charts）
+● 行情数据接入与存储
+● 事件标注在K线图上显示
+● 多标的叠加对比
+阶段三：增强功能
+● 交易记录管理
+● 持仓盈亏计算
+● 事件筛选与搜索
+● 数据导入导出
+阶段四：优化完善
+● 移动端适配
+● 性能优化
+● 数据同步定时任务
+● 用户体验优化
+
+六、参考资源
+文档链接
+● Next.js 文档
+● Lightweight Charts 文档
+● KLineChart 文档
+● Prisma 文档
+● shadcn/ui 文档
+行情API文档
+● QOS API
+● AKShare 文档
+● Finnhub API
+● Alpha Vantage API
+相关教程
+● Build a Stock Market Web App With Node and Javascript
+● Alpaca - Node.js Stock Screener

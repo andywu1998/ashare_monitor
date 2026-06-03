@@ -1,0 +1,15 @@
+invest_community/tools/company_report/reports/
+.env
+.env.*
+MIGRATION_NOTES.md
+.claude/settings.local.json
+**/.claude/settings.local.json
+*.enc
+*.pem
+*.key
+.venv/
+myenv/
+venv/
+record/
+__pycache__/
+*.pyc

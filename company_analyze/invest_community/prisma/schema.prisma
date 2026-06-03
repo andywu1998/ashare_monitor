@@ -1,0 +1,99 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 公司/标的表
+model Company {
+  id          String   @id @default(cuid())
+  code        String   @unique // 股票代码
+  name        String   // 公司名称
+  market      String   // 市场（A股/港股/美股）
+  industry    String?  // 行业
+  description String?  @db.Text // 描述
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联关系
+  events Event[]
+  trades Trade[]
+  klines Kline[]
+
+  @@index([code])
+  @@index([market])
+  @@map("companies")
+}
+
+// 事件表
+model Event {
+  id          String   @id @default(cuid())
+  companyId   String
+  title       String   // 事件标题
+  description String?  @db.Text // 事件描述
+  eventDate   DateTime // 事件日期
+  eventType   String   // 事件类型
+  impact      String?  // 影响（positive/negative/neutral）
+  source      String?  // 来源
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联关系
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([eventDate])
+  @@index([eventType])
+  @@map("events")
+}
+
+// 交易记录表
+model Trade {
+  id        String   @id @default(cuid())
+  companyId String
+  tradeType String   // 交易类型（buy/sell）
+  quantity  Float    // 数量
+  price     Float    // 价格
+  amount    Float    // 金额
+  fee       Float?   // 手续费
+  tradeDate DateTime // 交易日期
+  note      String?  @db.Text // 备注
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联关系
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([tradeDate])
+  @@map("trades")
+}
+
+// K线数据表
+model Kline {
+  id        String   @id @default(cuid())
+  companyId String
+  interval  String   // 时间间隔
+  openTime  DateTime // 开盘时间
+  open      Float    // 开盘价
+  high      Float    // 最高价
+  low       Float    // 最低价
+  close     Float    // 收盘价
+  volume    Float    // 成交量
+  closeTime DateTime // 收盘时间
+  createdAt DateTime @default(now())
+
+  // 关联关系
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, interval, openTime])
+  @@index([companyId, interval])
+  @@index([openTime])
+  @@map("klines")
+}
