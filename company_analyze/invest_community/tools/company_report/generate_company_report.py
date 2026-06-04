@@ -12,6 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from llm_lib.huoshan import chat_stream
 
+try:
+    from market_data import build_recent_price_context
+except ImportError:
+    from invest_community.tools.company_report.market_data import build_recent_price_context
+
 
 def _call_huoshan_stream(prompt: str, show_progress: bool = True) -> str:
     """
@@ -67,9 +72,18 @@ def _slugify(name: str) -> str:
 
 
 def _build_prompt(company: str) -> str:
+    price_context = build_recent_price_context(company, days=30)
     return (
         "请为以下公司撰写一篇面向机构投资者的完整证券研究报告。\n"
         f"公司名称：{company}\n\n"
+        "以下是系统预先获取的行情数据，请作为研报分析的事实输入之一：\n"
+        f"{price_context}\n\n"
+        "关于行情日期的硬性要求：\n"
+        "- 行情数据表格中的日期是事实数据，必须原样引用其中的 YYYYMMDD 日期。\n"
+        "- 不得把表格中的年份改写成其他年份；例如表格是 20260421，就不能写成 2024年4月21日。\n"
+        "- 如需改写成中文日期或 ISO 日期，必须保持同一年、同一月、同一日。\n"
+        "- “近30天股价表现与事件催化”章节必须明确写出行情数据表格里的起止日期。\n\n"
+        "- 如果 行情数据获取失败，不得编造任何具体日期，也不得写“例如 YYYY年XX月XX日”这类占位日期。\n\n"
         "任务目标：\n"
         "- 基于公开信息形成一篇结构完整、证据充分、结论明确的中文研报。\n"
         "- 优先使用最近12个月的信息；对于股价、机构持仓、机构观点等时效性强的信息，优先使用最近90天内可获得的信息。\n"

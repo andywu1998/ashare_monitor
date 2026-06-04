@@ -39,3 +39,4 @@ venv/
 record/
 company_analyze/invest_community/run.sh
 company_analyze/scp_to_vm.sh
+company_analyze/invest_community/tools/company_report/tasks_template.csv

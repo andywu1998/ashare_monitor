@@ -33,6 +33,45 @@ def _write_csv(path: Path, fieldnames, rows):
     tmp_path.replace(path)
 
 
+def _update_csv_row(
+    path: Path,
+    fieldnames,
+    message_col: str,
+    company_col: str,
+    message_id: str,
+    company: str,
+    updates: dict[str, str],
+) -> None:
+    """Merge updates into the latest CSV copy to avoid clobbering other workers."""
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        latest_rows = list(reader)
+        latest_fieldnames = list(reader.fieldnames or fieldnames)
+
+    for col in fieldnames:
+        if col not in latest_fieldnames:
+            latest_fieldnames.append(col)
+            for latest_row in latest_rows:
+                latest_row.setdefault(col, "")
+
+    matched = False
+    for latest_row in latest_rows:
+        same_message = message_id and (latest_row.get(message_col) or "").strip() == message_id
+        same_company_without_message = (
+            not message_id
+            and (latest_row.get(company_col) or "").strip() == company
+        )
+        if same_message or same_company_without_message:
+            latest_row.update(updates)
+            matched = True
+            break
+
+    if not matched:
+        return
+
+    _write_csv(path, latest_fieldnames, latest_rows)
+
+
 def _parse_report_path(value: str, csv_dir: Path) -> Path | None:
     if not value:
         return None
@@ -143,17 +182,26 @@ def main() -> int:
             print("CSV 表头需要包含公司名/报告路径/是否上传字段")
             return 1
 
+        schema_changed = False
         if gen_col is None:
             gen_col = "是否生成研报"
             fieldnames.append(gen_col)
             for row in rows:
                 row.setdefault(gen_col, "")
+            schema_changed = True
 
         if msg_col is None:
             msg_col = "message_id"
             fieldnames.append(msg_col)
             for row in rows:
                 row.setdefault(msg_col, "")
+            schema_changed = True
+
+        if schema_changed:
+            for row in rows:
+                for col in fieldnames:
+                    row.setdefault(col, "")
+            _write_csv(csv_path, fieldnames, rows)
 
         all_done = True
         progressed = False
@@ -203,6 +251,15 @@ def main() -> int:
                         output_path = _run_generate(company, generate_script, message_id)
                         row[report_col] = output_path
                         row[gen_col] = "是"
+                        _update_csv_row(
+                            csv_path,
+                            fieldnames,
+                            msg_col,
+                            company_col,
+                            message_id,
+                            company,
+                            {report_col: output_path, gen_col: "是"},
+                        )
                         progressed = True
                         report_path = Path(output_path)
                     except Exception as exc:
@@ -215,6 +272,15 @@ def main() -> int:
                     try:
                         _run_upload(report_path, upload_script, message_id)
                         row[upload_col] = "是"
+                        _update_csv_row(
+                            csv_path,
+                            fieldnames,
+                            msg_col,
+                            company_col,
+                            message_id,
+                            company,
+                            {upload_col: "是"},
+                        )
                         progressed = True
                     except Exception as exc:
                         print(f"上传失败: {company} - {exc}")
@@ -226,8 +292,6 @@ def main() -> int:
                         marker_path.unlink()
                     except OSError as exc:
                         print(f"警告: 无法清理标记文件 {marker_path}: {exc}")
-
-        _write_csv(csv_path, fieldnames, rows)
 
         if all_done:
             print("所有任务已完成")
