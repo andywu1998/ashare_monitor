@@ -16,6 +16,12 @@ sh sync-run.sh
 sh sync-run.sh --company 天通股份
 ```
 
+也可以直接生成 A 股今日走势分析，并走同一套飞书 docx 上传和多维表格写入路径：
+
+```bash
+sh sync-run.sh --ashare-market-brief
+```
+
 如果要把这次上传关联到飞书多维表格中的某条任务，可以额外传入 `message_id`：
 
 ```bash
@@ -35,6 +41,8 @@ logs/company_analyze_sync_cron.log
 `sync-run.sh` 的主流程分为两段：先从飞书多维表格同步待处理任务到本地 CSV，再逐条生成研报并上传飞书。
 
 如果传入 `--company`，脚本会进入“直接生成模式”，跳过飞书表格同步和 CSV 队列，只执行单家公司研报生成与上传。
+
+如果传入 `--ashare-market-brief`，脚本会进入“A 股市场复盘模式”，跳过飞书表格同步和 CSV 队列，先用 Tushare SDK 获取真实行情、成交额 Top、行业强弱、30 日走势和机构上下文，再生成 Markdown，并复用 `create_doc_from_md.py` 上传飞书和写入同一个多维表格。
 
 ### 1. 初始化运行环境
 
@@ -95,6 +103,46 @@ sh sync-run.sh --company 黑芝麻智能
 
 ```bash
 sh sync-run.sh --company 黑芝麻智能 --message-id om_x100xxxx
+```
+
+### A 股市场复盘模式
+
+入口命令：
+
+```bash
+sh sync-run.sh --ashare-market-brief [--date latest|YYYYMMDD] [--message-id om_xxx]
+```
+
+可选参数：
+
+```bash
+--top-n 20
+--lookback 30
+--institution-top-n 5
+--institution-lookback-days 365
+```
+
+执行逻辑：
+
+- 自动生成 `om_` 开头的随机 `message_id`，除非显式传入 `--message-id`
+- 使用 `record/<message_id>` 做任务级锁
+- 调用 `invest_community/tools/company_report/generate_ashare_market_brief.py`
+- 生成 Markdown 到 `invest_community/tools/company_report/reports/`
+- 调用 `invest_community/tools/feishu/create_doc_from_md.py <path>`
+- 上传和写入多维表格路径与公司研报完全一致
+- 上传时设置 `FEISHU_MESSAGE_ID`，多维表格记录会携带该 `message_id`
+
+数据来源：
+
+- Tushare SDK
+- 指数日线、全市场日线、daily_basic、moneyflow（如可用）
+- 成交额 Top 个股最近 30 个交易日走势
+- 前十大流通股东、研报评级、机构调研等机构上下文（受 Tushare 权限和频率限制，失败会写入取数备注）
+
+示例：
+
+```bash
+sh sync-run.sh --ashare-market-brief --top-n 20 --lookback 30 --institution-top-n 5
 ```
 
 ### 2. 同步飞书多维表格到 CSV

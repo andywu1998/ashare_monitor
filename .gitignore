@@ -24,7 +24,12 @@ configs/stock_sync.env
 *.env
 
 # Local tool artifacts
-.codex
+**/.codex
+**/.codex/
+!.codex/
+!.codex/skills/
+!.codex/skills/tushare-ashare-market-brief/
+!.codex/skills/tushare-ashare-market-brief/**
 
 # Migrated company_analyze local/private artifacts
 .env.*
