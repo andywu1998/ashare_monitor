@@ -30,7 +30,8 @@ ashare_monitor/
 │   ├── run_stock_sync_all.py
 │   └── run_stock_sync_all_concurrent.py
 │   ├── run_stock_sync_recent_days.py
-│   └── run_stock_moneyflow_recent_days.py
+│   ├── run_stock_moneyflow_recent_days.py
+│   └── run_hk_ps_series.py        # 港股逐日 PS(TTM) 抓取（默认 09660.HK 地平线机器人）
 ├── services/
 │   └── cycle_web/
 ├── configs/
@@ -118,7 +119,18 @@ python3 scripts/run_daily.py --provider sina
 python3 scripts/run_top10_volume.py --sort-by amount --top-k 10
 ```
 
-### 3) 生成周期分析 HTML（脚本）
+### 3) 抓取港股逐日 PS(TTM)（如 09660.HK 地平线机器人）
+
+```bash
+./.venv/bin/python scripts/run_hk_ps_series.py   --symbol 09660   --output reports/hk_ps_09660_daily.csv
+```
+
+- 数据源与口径见 `docs/hk_data_sources.md`：日线用 AkShare 新浪，总市值用百度股市通，
+  营收用东方财富港股财报，业绩公告时点用港交所披露易，汇率用中国银行港币牌价。
+- 输出列：`trade_date, close_hkd, market_cap_hkd, shares_implied, ps_ttm, ttm_revenue_rmb,
+  ttm_revenue_hkd, hkd_cny, ttm_basis`；原始抓取结果留档在 `data/hk_ps_cache/`。
+
+### 4) 生成周期分析 HTML（脚本）
 
 ```bash
 python3 scripts/run_cycle_report.py \
@@ -129,7 +141,7 @@ python3 scripts/run_cycle_report.py \
   --database mydb
 ```
 
-### 4) 股票数据同步（Tushare -> MySQL）
+### 5) 股票数据同步（Tushare -> MySQL）
 
 同步模块会默认读取 `~/.zshrc` 中的环境变量（`TUSHARE_TOKEN` + `MYSQL_*`）。
 
@@ -170,7 +182,7 @@ python3 scripts/run_stock_sync_recent_days.py
 - 表存在时会做 UPSERT，支持重复执行
 - `stock_daily` 已包含主力资金流字段（`buy_*` / `sell_*` / `net_mf_*`）
 
-### 5) 按交易日同步主力资金流（全市场）
+### 6) 按交易日同步主力资金流（全市场）
 
 按交易日逐天拉取，避免 TuShare `moneyflow` 多日请求被 6000 行上限截断：
 
