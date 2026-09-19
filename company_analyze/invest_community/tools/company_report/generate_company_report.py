@@ -203,9 +203,13 @@ def main() -> int:
     if use_mock:
         text = _build_mock_report(company)
     else:
-        api_key = os.getenv("ARK_API_KEY")
+        api_key = (
+            os.getenv("LLM_API_KEY")
+            or os.getenv("DEEPSEEK_API_KEY")
+            or os.getenv("ARK_API_KEY")
+        )
         if not api_key:
-            print("缺少 ARK_API_KEY，请先设置环境变量。")
+            print("缺少 LLM_API_KEY/DEEPSEEK_API_KEY/ARK_API_KEY，请先设置环境变量。")
             return 1
 
         prompt = _build_prompt(company)

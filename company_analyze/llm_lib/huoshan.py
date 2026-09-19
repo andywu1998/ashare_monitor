@@ -1,4 +1,5 @@
 import os
+import time
 from openai import OpenAI
 from typing import Iterator, Optional
 
@@ -20,13 +21,37 @@ class HuoshanClient:
             base_url: API基础URL
             model: 模型ID（智能体ID）
         """
-        self.api_key = api_key or os.environ.get("ARK_API_KEY")
-        self.base_url = base_url
-        self.model = model
+        self.api_key = (
+            api_key
+            or os.environ.get("LLM_API_KEY")
+            or os.environ.get("ARK_API_KEY")
+            or os.environ.get("DEEPSEEK_API_KEY")
+        )
+        self.base_url = os.environ.get("LLM_BASE_URL", base_url)
+        self.model = os.environ.get("LLM_MODEL", model)
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key
         )
+
+    def _retry_config(self) -> tuple[int, float]:
+        retries = int(os.getenv("ARK_RETRY_ATTEMPTS", "4"))
+        backoff = float(os.getenv("ARK_RETRY_BACKOFF_SECONDS", "5"))
+        return retries, backoff
+
+    def _sleep_seconds(self, attempt: int) -> float:
+        _, backoff = self._retry_config()
+        return min(backoff * (2 ** attempt), float(os.getenv("ARK_RETRY_MAX_SECONDS", "60")))
+
+    @staticmethod
+    def _is_rate_limited(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            return True
+        response = getattr(exc, "response", None)
+        if response is not None and getattr(response, "status_code", None) == 429:
+            return True
+        return "RateLimit" in exc.__class__.__name__
 
     def chat(
         self,
@@ -43,14 +68,24 @@ class HuoshanClient:
         Returns:
             str: 模型返回的完整响应
         """
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return completion.choices[0].message.content
+        retries, _ = self._retry_config()
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+                return completion.choices[0].message.content
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_rate_limited(exc) or attempt >= retries:
+                    raise
+                time.sleep(self._sleep_seconds(attempt))
+        raise RuntimeError(f"chat failed: {last_exc}")
 
     def chat_stream(
         self,
@@ -67,17 +102,28 @@ class HuoshanClient:
         Yields:
             str: 模型返回的文本片段
         """
-        stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            stream=True,
-        )
-        for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        retries, _ = self._retry_config()
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    stream=True,
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                return
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_rate_limited(exc) or attempt >= retries:
+                    raise
+                time.sleep(self._sleep_seconds(attempt))
+        raise RuntimeError(f"chat_stream failed: {last_exc}")
 
 
 # 便捷函数

@@ -225,10 +225,10 @@ def _update_doc_via_lark_cli(document_id: str, title: str, md_path: Path) -> Non
         document_id,
         "--command",
         "overwrite",
+        "--doc-format",
+        "markdown",
         "--content",
         f"@./{md_path.name}",
-        "--new-title",
-        title,
         "--format",
         "json",
     ]

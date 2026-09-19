@@ -7,6 +7,7 @@ VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
 VENV_PY="$VENV_DIR/bin/python3"
 RECORD_DIR="$ROOT_DIR/record"
 SYNC_LOCK_DIR="$RECORD_DIR/sync-csv.lock"
+SYNC_LOCK_STALE_SECONDS="${SYNC_LOCK_STALE_SECONDS:-900}"
 LARK_CLI_BIN="${LARK_CLI_BIN:-$(command -v lark-cli || true)}"
 LARK_NODE_BIN="${LARK_NODE_BIN:-$(dirname "$LARK_CLI_BIN")}"
 DIRECT_COMPANY=""
@@ -127,14 +128,30 @@ fi
 
 mkdir -p "$RECORD_DIR"
 
+lock_age_seconds() {
+  lock_dir="$1"
+  if [ ! -d "$lock_dir" ]; then
+    echo 0
+    return 0
+  fi
+
+  now_ts=$(date +%s)
+  lock_ts=$(stat -c %Y "$lock_dir" 2>/dev/null || echo 0)
+  if [ "$lock_ts" -le 0 ] 2>/dev/null; then
+    echo 0
+    return 0
+  fi
+  echo $((now_ts - lock_ts))
+}
+
 if [ -f "$ROOT_DIR/invest_community/.env" ]; then
   set -a
   . "$ROOT_DIR/invest_community/.env"
   set +a
 fi
 
-if [ -z "$DIRECT_MARKET_BRIEF" ] && [ -z "${ARK_API_KEY:-}" ]; then
-  echo "ARK_API_KEY is required. Set it in environment or invest_community/.env." >&2
+if [ -z "$DIRECT_MARKET_BRIEF" ] && [ -z "${LLM_API_KEY:-${ARK_API_KEY:-}}" ]; then
+  echo "LLM_API_KEY or ARK_API_KEY is required. Set it in environment or invest_community/.env." >&2
   exit 1
 fi
 
@@ -229,7 +246,24 @@ if mkdir "$SYNC_LOCK_DIR" 2>/dev/null; then
   cleanup_sync_lock
   trap - EXIT INT TERM
 else
-  echo "sync-csv is already running, skip."
+  LOCK_AGE=$(lock_age_seconds "$SYNC_LOCK_DIR")
+  if [ "$SYNC_LOCK_STALE_SECONDS" -gt 0 ] && [ "$LOCK_AGE" -ge "$SYNC_LOCK_STALE_SECONDS" ]; then
+    echo "sync-csv lock is stale (${LOCK_AGE}s), reclaiming."
+    rmdir "$SYNC_LOCK_DIR" 2>/dev/null || true
+    if mkdir "$SYNC_LOCK_DIR" 2>/dev/null; then
+      cleanup_sync_lock() {
+        rmdir "$SYNC_LOCK_DIR" 2>/dev/null || true
+      }
+      trap cleanup_sync_lock EXIT INT TERM
+      "$VENV_PY" "$ROOT_DIR/invest_community/tools/feishu/bitable_debug.py" sync-csv --table-id tblnCWQYqUXp3tmU
+      cleanup_sync_lock
+      trap - EXIT INT TERM
+    else
+      echo "sync-csv lock still present after reclaim attempt, skip."
+    fi
+  else
+    echo "sync-csv is already running, skip."
+  fi
 fi
 
 "$VENV_PY" "$ROOT_DIR/invest_community/tools/company_report/run_tasks_from_csv.py" "$ROOT_DIR/invest_community/tools/company_report/tasks_template.csv" --record-dir "$RECORD_DIR"
